@@ -4,3 +4,4 @@ streamlit-player
 pandas
 python-dotenv 
 requests
+google-genai
