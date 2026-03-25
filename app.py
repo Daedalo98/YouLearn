@@ -126,7 +126,39 @@ if st.session_state.video_url and st.session_state.transcript:
         st.caption(f"**Channel:** {meta.get('author_name', 'Unknown')} | **Uploaded:** {meta.get('upload_date', 'Unknown')} | **Source:** [Link]({meta.get('video_url', '')})")
         st.divider()
     
-    transcript_container = st.container(height=500)
+    # --- NEW: Global Read/Edit Toggle & Zoom Control ---
+    st.markdown("**Markdown Supported:** Use `**bold**`, `*italic*`, `# Heading`, or `<u>underline</u>`")
+    
+    # We put the toggle and the zoom slider side-by-side
+    ctrl_col1, ctrl_col2 = st.columns([1, 1])
+    with ctrl_col1:
+        is_preview_mode = st.toggle("👁️ Preview Formatting Mode", value=False)
+    with ctrl_col2:
+        # Slider controls the font size from 10px up to a massive 50px
+        text_zoom = st.slider("🔍 Zoom Text Size (px)", min_value=10, max_value=50, value=16, label_visibility="collapsed")
+        
+    # ==========================================
+    # MAGIC CSS INJECTION
+    # ==========================================
+    # This silently tells the browser to override Streamlit's default font sizes 
+    # based on whatever number the slider is currently set to.
+    st.markdown(f"""
+        <style>
+            /* Makes the typing area text bigger */
+            .stTextArea textarea {{
+                font-size: {text_zoom}px !important;
+                line-height: 1.5 !important;
+            }}
+            /* Makes the preview mode text bigger */
+            .stMarkdown p, .stMarkdown li {{
+                font-size: {text_zoom}px !important;
+                line-height: 1.5 !important;
+            }}
+        </style>
+    """, unsafe_allow_html=True)
+    # ==========================================
+    
+    transcript_container = st.container(height=600)
     
     with transcript_container:
         for i, segment in enumerate(st.session_state.transcript):
@@ -140,7 +172,7 @@ if st.session_state.video_url and st.session_state.transcript:
             current_text = str(segment.get('text', '')) # Force as string
             
             # Simple 2-column layout for each row
-            btn_col, text_col = st.columns([1.5, 10])
+            btn_col, text_col = st.columns([0.15*text_zoom, 1.5*text_zoom])
             
             with btn_col:
                 if st.button(f"⏱️ {timestamp_str}", key=f"btn_{i}", use_container_width=True):
@@ -149,21 +181,26 @@ if st.session_state.video_url and st.session_state.transcript:
             
             with text_col:
                 def update_text(index=i):
-                    # 1. Update the memory
                     st.session_state.transcript[index]['text'] = st.session_state[f"text_{index}"]
-                    # 2. Save to the JSON file
                     functions.save_edits_to_disk(CACHE_DIR)
-                    # 3. Show a tiny temporary success popup in the bottom right corner
                     st.toast("💾 Auto-saved!", icon="✅")
 
-                st.text_area(
-                    "Edit Text", 
-                    value=current_text, 
-                    key=f"text_{i}", 
-                    label_visibility="collapsed",
-                    height=80,
-                    on_change=update_text
-                )
+                # If the toggle is ON, render the beautiful formatted text
+                if is_preview_mode:
+                    # Use a markdown block to render sizes, bold, italic, etc.
+                    st.markdown(current_text, unsafe_allow_html=True)
+                
+                # If the toggle is OFF, show the raw editor
+                else:
+                    st.text_area(
+                        "Edit Text", 
+                        value=current_text, 
+                        key=f"text_{i}", 
+                        label_visibility="collapsed",
+                        height=5*text_zoom, # Dynamically adjust height based on zoom for better UX
+                        on_change=update_text
+                    )
+
             
             st.markdown("<hr style='margin: 0.2em 0px; border-top: 1px dashed #ddd;'>", unsafe_allow_html=True)
             
