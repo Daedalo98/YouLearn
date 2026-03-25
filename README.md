@@ -33,7 +33,7 @@ YouLearn is a Streamlit-based app for transforming YouTube video transcripts int
 1. Clone repository (if not already):
 
 ```bash
-git clone https://github.com/<your_org>/YouLearn.git
+git clone https://github.com/Daedalo98/YouLearn
 cd YouLearn
 ```
 
