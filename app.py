@@ -355,23 +355,35 @@ if st.session_state.video_url and st.session_state.transcript:
             
             is_unlimited = st.checkbox("Unlimited Questions", value=False)
             target_questions = 999 if is_unlimited else st.number_input("Target Number of Questions", 1, 100, 10, disabled=is_unlimited)
-            num_options = st.number_input("Options per Question", 2, 6, 4)
-            batch_quiz = st.number_input("Batch Generation Size", 1, 10, 4, help="How many questions the LLM generates in the background at once.")
+            num_options = st.number_input("Options per Question", 2, 10, 5)
+            batch_quiz = st.number_input("Batch Generation Size", 1, 10, 3, help="How many questions the LLM generates in the background at once.")
             
             st.divider()
             st.subheader("LLM Settings")
-            with st.expander("🧠 Active Models & Gen Options", expanded=False):
+
+            with st.expander("🧠 Active Models & Gen Options", expanded=True):
                 available_models = manager.get_models()
                 default_models = ["No models found"] if not available_models else available_models
                 text_idx = default_models.index("granite4:7b-a1b-h") if "granite4:7b-a1b-h" in default_models else 0
                 text_model_quiz = st.selectbox("Text Generation Model", default_models, index=text_idx, key="quiz_text_model")
-                temperature_quiz = st.number_input("Temperature", 0.0, 2.0, 0.3, 0.1, key="quiz_temp")
-                max_tokens_quiz = st.number_input("Max Tokens", 100, 5000, 2000, 100, key="quiz_tokens")
+                st.divider()
+                temperature_quiz = st.number_input("Temperature", 0.0, 1000.0, 0.3, 0.1, key="quiz_temp", help="Higher values make output more random")
+                max_tokens_quiz = st.number_input("Max Tokens", 100, 10000, 2000, 100, key="quiz_tokens")
+                streaming_on = st.toggle("Streaming Generation", value=True, key="quiz_streaming")
 
+            st.subheader("System Prompts")
             prompts_dict = functions.load_prompts(PROMPTS_FILE)
             quiz_prompt_name = st.selectbox("Active Prompt", list(prompts_dict.keys()), index=list(prompts_dict.keys()).index("Quiz_Generator") if "Quiz_Generator" in prompts_dict else 0, key="quiz_prompt_sel")
             quiz_system_prompt = st.text_area("Edit Current Prompt", prompts_dict[quiz_prompt_name], height=150, key="quiz_prompt_area")
             
+            with st.expander("Save / Modify Prompt"):
+                new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_prompt_name, key="quiz_new_prompt_name")
+                if st.button("Save Prompt", use_container_width=True, key="save_quiz_prompt_btn"):
+                    if new_prompt_name and system_prompt:
+                        functions.save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt)
+                        st.success("Saved!")
+                        st.rerun()
+
             if st.session_state.quiz_state != "setup":
                 if st.button("🔄 Reset Quiz", use_container_width=True):
                     st.session_state.quiz_state = "setup"
