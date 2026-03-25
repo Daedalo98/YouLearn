@@ -3,6 +3,7 @@ import re
 import json
 import requests
 import streamlit as st
+import AI_manager as manager
 
 def extract_video_id(url: str) -> str:
     """Extracts the YouTube Video ID from any standard, shortened, live, or shorts URL."""
@@ -162,7 +163,8 @@ def load_prompts(filepath: str) -> dict:
     default_obsidian = (
         "You are an expert knowledge manager. Process the provided YouTube video metadata and transcript into a highly structured, Obsidian-style Markdown note.\n\n"
         "Requirements:\n"
-        "1. Include a YAML frontmatter block with: tags, aliases, author, date, and source url.\n"
+        "0. Include a title at the top using the video title (# video title).\n"
+        "1. Include a YAML frontmatter block with: tags (e.g., #tag1, #tag2), aliases, author, date, and source url.\n"
         "2. Create a brief 'Summary' section.\n"
         "3. Create a 'Key Insights' section using bullet points.\n"
         "4. Format the main concepts under clear header sections.\n"
@@ -171,19 +173,18 @@ def load_prompts(filepath: str) -> dict:
     )
     
     default_quiz = (
-        "You are an expert educator. Based on the provided transcript, generate a multiple-choice quiz.\n"
-        "You MUST output ONLY a valid JSON array. Do not include markdown formatting or conversational text.\n"
+        "You are an adaptive expert educator. Based on the provided notes and the history of previous questions, generate EXACTLY ONE new multiple-choice question.\n"
+        "Ensure the question is different from previous ones. If the user got previous questions wrong, focus on those concepts.\n"
+        "You MUST output ONLY a valid JSON object. No markdown, no arrays, no conversational text.\n"
         "Format strictly like this:\n"
-        "[\n"
-        "  {\n"
-        "    \"question\": \"What is the main topic?\",\n"
-        "    \"options\": [\"A\", \"B\", \"C\"],\n"
-        "    \"answer\": \"A\",\n"
-        "    \"explanation\": \"Because the video states...\"\n"
-        "  }\n"
-        "]"
+        "{\n"
+        "  \"question\": \"What is the main topic?\",\n"
+        "  \"options\": [\"A\", \"B\", \"C\", \"D\"],\n"
+        "  \"answer\": \"A\",\n"
+        "  \"explanation\": \"Because the notes state...\"\n"
+        "}"
     )
-    
+
     default_dict = {"Obsidian_Default": default_obsidian, "Quiz_Generator": default_quiz}
     
     if os.path.exists(filepath):
@@ -214,7 +215,7 @@ def save_prompt(filepath: str, name: str, prompt_text: str):
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(prompts, f, indent=4)
 
-def prepare_llm_payload() -> str:
+def prepare_llm_payload(enhanced: bool) -> str:
     """Combines metadata and edited transcript into a single string for the LLM."""
     meta = st.session_state.metadata
     
@@ -230,6 +231,17 @@ def prepare_llm_payload() -> str:
         f"--- REDACTED TRANSCRIPT ---\n"
         f"{text_only}"
     )
+    if enhanced:
+        payload = (f"--- METADATA ---\n"
+                   f"Title: {meta.get('title', 'Unknown')}\n"
+                   f"Author: {meta.get('author_name', 'Unknown')}\n"
+                   f"Date: {meta.get('upload_date', 'Unknown')}\n"
+                   f"URL: {meta.get('video_url', 'Unknown')}\n\n"
+                   f"--- REDACTED TRANSCRIPT ---\n"
+                   f"{text_only}"
+                   f"--- ENHANCED NOTES ---\n"
+                   f"{st.session_state.get('enhanced_text', '')}")
+        
     return payload
 
 def prepare_quiz_payload() -> str:
@@ -249,3 +261,126 @@ def prepare_quiz_payload() -> str:
         f"{notes_text}"
     )
     return payload
+
+
+def check_answer(user_choice: str, correct_answer: str) -> bool:
+    """Robust fallback logic to check if the answer is correct despite formatting differences."""
+    if user_choice == "I don't know":
+        return False
+        
+    u = str(user_choice).strip().lower()
+    c = str(correct_answer).strip().lower()
+    
+    if u == c: 
+        return True
+    # If the LLM output "B" but the user string is "B. To combine..."
+    if u.startswith(f"{c}.") or u.startswith(f"{c})"): 
+        return True
+    # If the correct answer text is hiding inside the user's selected string
+    if c in u: 
+        return True
+        
+    return False
+
+def bg_fetch_question(shared_queue, shared_status, payload, history, sys_prompt, text_model, temp, max_tok, num_opts, llm_manager):
+    """Runs in a parallel thread. Fetches the next question and routes errors to the UI."""
+    shared_status["running"] = True
+    shared_status["error"] = None # Clear old errors
+    
+    try:
+        context = "History of asked questions and user performance:\n"
+        if history:
+            for idx, h in enumerate(history):
+                u_ans = h.get('user_choice', 'Currently Answering...')
+                c_ans = h.get('answer', 'Unknown')
+                context += f"Q{idx+1}: {h.get('question')}\nUser Answered: {u_ans} | Correct Answer: {c_ans}\n\n"
+        else:
+            context += "No previous questions.\n"
+
+        dynamic_prompt = (
+            f"{sys_prompt}\n\n{context}\n\n"
+            f"CRITICAL INSTRUCTION: Generate EXACTLY 1 new question with EXACTLY {num_opts} possible options. "
+            f"Your JSON object MUST contain an 'options' array with exactly {num_opts} strings. "
+            f"ONLY return a valid JSON object."
+        )
+
+        full_text = llm_manager.generate_sync(payload, dynamic_prompt, text_model, temp, max_tok)
+
+        start = full_text.find('{')
+        end = full_text.rfind('}')
+        if start != -1 and end != -1:
+            norm_q = {str(k).lower().strip(): v for k, v in json.loads(full_text[start:end+1]).items()}
+            if "options" in norm_q and isinstance(norm_q["options"], list):
+                shared_queue.append(norm_q)
+            else:
+                raise ValueError("LLM failed to return a valid options array.")
+        else:
+            raise ValueError(f"No JSON brackets found. Raw: {full_text}")
+            
+    except Exception as e:
+        # Route the error to the dictionary so the Streamlit UI can display it!
+        shared_status["error"] = str(e)
+    finally:
+        shared_status["running"] = False
+
+
+def build_quiz_context(history, queue):
+    """Prunes history to ONLY the question text, user performance, and liking score to save tokens and prevent repetition."""
+    context = "Questions already asked or currently in queue (DO NOT REPEAT THESE):\n"
+    if not history and not queue:
+        return context + "None.\n"
+    
+    # 1. Add historical questions
+    for i, h in enumerate(history):
+        q_text = h.get('question', 'Unknown Question')
+        skipped = h.get('user_choice') == "I don't know"
+        is_correct = h.get('is_correct', False)
+        score = h.get('like_score', 0)
+        
+        status = "Skipped" if skipped else ("Correct" if is_correct else "Wrong")
+        context += f"- {q_text} (User Status: {status}, Liking Score: {score}/100)\n"
+        
+    # 2. Add queued questions (so the LLM doesn't generate duplicates of what's already waiting!)
+    for q in queue:
+        context += f"- {q.get('question', 'Unknown Question')} (Status: In Queue)\n"
+        
+    return context
+
+def bg_fetch_batch(shared_queue, shared_status, payload, history, sys_prompt, text_model, temp, max_tok, num_opts, batch_size, llm_manager):
+    """Runs in parallel. Fetches a BATCH of questions and routes errors/payloads to the UI."""
+    shared_status["running"] = True
+    shared_status["error"] = None 
+    
+    try:
+        context = build_quiz_context(history, shared_queue)
+
+        dynamic_prompt = (
+            f"{sys_prompt}\n\n{context}\n\n"
+            f"CRITICAL INSTRUCTION: Generate EXACTLY a JSON array of {batch_size} new questions. "
+            f"Each question MUST have exactly {num_opts} options. "
+            f"Do NOT repeat any questions from the context above. If the user got previous questions 'Wrong' or 'Skipped', focus your new questions on those concepts. "
+            f"Format strictly as a JSON list of objects:\n"
+            f"[\n  {{\"question\": \"...\", \"options\": [\"A\", \"B\"...], \"answer\": \"...\", \"explanation\": \"...\"}}\n]"
+        )
+
+        # Save the exact prompt being sent so the user can debug it in the UI
+        shared_status["last_payload"] = f"{payload}\n\n--- DYNAMIC PROMPT ---\n{dynamic_prompt}"
+
+        full_text = llm_manager.generate_sync(payload, dynamic_prompt, text_model, temp, max_tok)
+
+        # Extract the JSON array [...]
+        start = full_text.find('[')
+        end = full_text.rfind(']')
+        if start != -1 and end != -1:
+            raw_batch = json.loads(full_text[start:end+1])
+            for raw_q in raw_batch:
+                norm_q = {str(k).lower().strip(): v for k, v in raw_q.items()}
+                if "options" in norm_q and isinstance(norm_q["options"], list):
+                    shared_queue.append(norm_q) # Add each parsed question to the queue
+        else:
+            raise ValueError(f"No JSON array brackets found. Raw: {full_text}")
+            
+    except Exception as e:
+        shared_status["error"] = str(e)
+    finally:
+        shared_status["running"] = False
