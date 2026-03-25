@@ -160,50 +160,17 @@ def save_edits_to_disk(CACHE_DIR: str):
 
 def load_prompts(filepath: str) -> dict:
     """Loads system prompts. Creates default Obsidian and Quiz prompts if missing."""
-    default_obsidian = (
-        "You are an expert knowledge manager. Process the provided YouTube video metadata and transcript into a highly structured, Obsidian-style Markdown note.\n\n"
-        "Requirements:\n"
-        "0. Include a title at the top using the video title (# video title).\n"
-        "1. Include a YAML frontmatter block with: tags (e.g., #tag1, #tag2), aliases, author, date, and source url.\n"
-        "2. Create a brief 'Summary' section.\n"
-        "3. Create a 'Key Insights' section using bullet points.\n"
-        "4. Format the main concepts under clear header sections.\n"
-        "5. Include a 'Related / Connections' section at the bottom for internal wiki linking (e.g., [[Concept Name]]).\n"
-        "6. Do NOT hallucinate. Rely strictly on the provided transcript."
-    )
-    
-    default_quiz = (
-        "You are an adaptive expert educator. Based on the provided notes and the history of previous questions, generate EXACTLY ONE new multiple-choice question.\n"
-        "Ensure the question is different from previous ones. If the user got previous questions wrong, focus on those concepts.\n"
-        "You MUST output ONLY a valid JSON object. No markdown, no arrays, no conversational text.\n"
-        "Format strictly like this:\n"
-        "{\n"
-        "  \"question\": \"What is the main topic?\",\n"
-        "  \"options\": [\"A\", \"B\", \"C\", \"D\"],\n"
-        "  \"answer\": \"A\",\n"
-        "  \"explanation\": \"Because the notes state...\"\n"
-        "}"
-    )
 
-    default_dict = {"Obsidian_Default": default_obsidian, "Quiz_Generator": default_quiz}
-    
     if os.path.exists(filepath):
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 prompts = json.load(f)
-                # Merge missing defaults into the loaded prompts
-                for k, v in default_dict.items():
-                    if k not in prompts:
-                        prompts[k] = v
-                        save_prompt(filepath, k, v)
                 return prompts
         except Exception:
             pass
-            
-    # If no file exists, create one with both defaults
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(default_dict, f, indent=4)
-    return default_dict
+    # If file doesn't exist or is corrupted, return an error
+    st.warning("⚠️ System prompts file missing or unreadable. Please fill it with valid JSON prompts.")
+    return {}
 
 def save_prompt(filepath: str, name: str, prompt_text: str):
     """Saves a new or updated prompt to the JSON file."""
