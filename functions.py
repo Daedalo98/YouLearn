@@ -249,47 +249,6 @@ def check_answer(user_choice: str, correct_answer: str) -> bool:
         
     return False
 
-def bg_fetch_question(shared_queue, shared_status, payload, history, sys_prompt, text_model, temp, max_tok, num_opts, llm_manager):
-    """Runs in a parallel thread. Fetches the next question and routes errors to the UI."""
-    shared_status["running"] = True
-    shared_status["error"] = None # Clear old errors
-    
-    try:
-        context = "History of asked questions and user performance:\n"
-        if history:
-            for idx, h in enumerate(history):
-                u_ans = h.get('user_choice', 'Currently Answering...')
-                c_ans = h.get('answer', 'Unknown')
-                context += f"Q{idx+1}: {h.get('question')}\nUser Answered: {u_ans} | Correct Answer: {c_ans}\n\n"
-        else:
-            context += "No previous questions.\n"
-
-        dynamic_prompt = (
-            f"{sys_prompt}\n\n{context}\n\n"
-            f"CRITICAL INSTRUCTION: Generate EXACTLY 1 new question with EXACTLY {num_opts} possible options. "
-            f"Your JSON object MUST contain an 'options' array with exactly {num_opts} strings. "
-            f"ONLY return a valid JSON object."
-        )
-
-        full_text = llm_manager.generate_sync(payload, dynamic_prompt, text_model, temp, max_tok)
-
-        start = full_text.find('{')
-        end = full_text.rfind('}')
-        if start != -1 and end != -1:
-            norm_q = {str(k).lower().strip(): v for k, v in json.loads(full_text[start:end+1]).items()}
-            if "options" in norm_q and isinstance(norm_q["options"], list):
-                shared_queue.append(norm_q)
-            else:
-                raise ValueError("LLM failed to return a valid options array.")
-        else:
-            raise ValueError(f"No JSON brackets found. Raw: {full_text}")
-            
-    except Exception as e:
-        # Route the error to the dictionary so the Streamlit UI can display it!
-        shared_status["error"] = str(e)
-    finally:
-        shared_status["running"] = False
-
 
 def build_quiz_context(history, queue):
     """Prunes history to ONLY the question text, user performance, and liking score to save tokens and prevent repetition."""
@@ -313,41 +272,37 @@ def build_quiz_context(history, queue):
         
     return context
 
-def bg_fetch_batch(shared_queue, shared_status, payload, history, sys_prompt, text_model, temp, max_tok, num_opts, batch_size, llm_manager):
-    """Runs in parallel. Fetches a BATCH of questions and routes errors/payloads to the UI."""
+def bg_fetch_answers(shared_status, payload, questions_list, sys_prompt, text_model, temp, max_tok, num_opts, llm_manager):
+    """Runs in parallel. Takes the Qmodel strings and generates the full JSON quiz."""
     shared_status["running"] = True
-    shared_status["error"] = None 
+    shared_status["done"] = False
+    shared_status["error"] = None
     
     try:
-        context = build_quiz_context(history, shared_queue)
-
-        dynamic_prompt = (
-            f"{sys_prompt}\n\n{context}\n\n"
-            f"CRITICAL INSTRUCTION: Generate EXACTLY a JSON array of {batch_size} new questions. "
+        a_prompt = (
+            f"{sys_prompt}\n\n"
+            f"CRITICAL INSTRUCTION: Build a multiple-choice quiz for EXACTLY the following {len(questions_list)} questions:\n"
+            f"{json.dumps(questions_list, indent=2)}\n\n"
             f"Each question MUST have exactly {num_opts} options. "
-            f"Do NOT repeat any questions from the context above. If the user got previous questions 'Wrong' or 'Skipped', focus your new questions on those concepts. "
             f"Format strictly as a JSON list of objects:\n"
-            f"[\n  {{\"question\": \"...\", \"options\": [\"A\", \"B\"...], \"answer\": \"...\", \"explanation\": \"...\"}}\n]"
+            f"[\n  {{\"question\": \"[Insert Question text here]\", \"options\": [\"A\", \"B\"...], \"answer\": \"...\", \"explanation\": \"...\"}}\n]"
         )
-
-        # Save the exact prompt being sent so the user can debug it in the UI
-        shared_status["last_payload"] = f"{payload}\n\n--- DYNAMIC PROMPT ---\n{dynamic_prompt}"
-
-        full_text = llm_manager.generate_sync(payload, dynamic_prompt, text_model, temp, max_tok)
-
-        # Extract the JSON array [...]
-        start = full_text.find('[')
-        end = full_text.rfind(']')
-        if start != -1 and end != -1:
-            raw_batch = json.loads(full_text[start:end+1])
-            for raw_q in raw_batch:
-                norm_q = {str(k).lower().strip(): v for k, v in raw_q.items()}
-                if "options" in norm_q and isinstance(norm_q["options"], list):
-                    shared_queue.append(norm_q) # Add each parsed question to the queue
+        
+        # Save the exact payload for UI transparency
+        shared_status["last_payload"] = f"--- A-MODEL SYSTEM PROMPT ---\n{a_prompt}\n\n--- DOCUMENT PAYLOAD ---\n{payload}"
+        
+        a_output = llm_manager.generate_sync(payload, a_prompt, text_model, temp, max_tok)
+        
+        start_a = a_output.find('[')
+        end_a = a_output.rfind(']')
+        if start_a != -1 and end_a != -1:
+            raw_batch = json.loads(a_output[start_a:end_a+1])
+            shared_status["result"] = [{str(k).lower().strip(): v for k, v in q.items()} for q in raw_batch]
         else:
-            raise ValueError(f"No JSON array brackets found. Raw: {full_text}")
+            raise ValueError(f"A-Model failed to return a JSON array. Raw: {a_output}")
             
     except Exception as e:
         shared_status["error"] = str(e)
     finally:
         shared_status["running"] = False
+        shared_status["done"] = True
