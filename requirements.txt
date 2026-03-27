@@ -5,3 +5,7 @@ pandas
 python-dotenv 
 requests
 google-genai
+pyzotero
+docling
+requests
+pymupdf4llm

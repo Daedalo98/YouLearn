@@ -211,6 +211,43 @@ def prepare_llm_payload(enhanced: bool) -> str:
         
     return payload
 
+# Callbacks for shared UI
+def pdf_get_llm_payload(enhanced=False) -> str:
+        """Combines PDF metadata and parsed markdown into a single string for the LLM."""
+        meta = st.session_state.pdf_metadata
+        document_text = st.session_state.pdf_markdown
+        
+        # 1. TOP BREAD: The Data
+        payload = (
+            f"--- METADATA ---\n"
+            f"Title: {meta.get('title', 'Unknown Title')}\n"
+            f"Authors: {meta.get('authors', 'Unknown Authors')}\n"
+            f"Year: {meta.get('year', 'Unknown Year')}\n"
+            f"DOI: {meta.get('DOI', 'None')}\n\n"
+            f"--- SOURCE DOCUMENT ---\n"
+            f"{document_text}\n"
+        )
+        
+        if enhanced and st.session_state.get('enhanced_text'):
+            payload += (
+                f"\n--- EXISTING ENHANCED NOTES ---\n"
+                f"{st.session_state.enhanced_text}\n"
+            )
+            
+        # 2. BOTTOM BREAD: The Ultimate Override Command
+        # This is the last thing the model reads before generating.
+        payload += (
+            f"\n\n=========================================\n"
+            f"SYSTEM OVERRIDE COMMAND:\n"
+            f"You have finished reading the source document.\n"
+            f"You MUST now output the notes using the EXACT Markdown template provided in your system instructions.\n"
+            f"DO NOT write conversational text. DO NOT write paragraphs.\n"
+            f"START YOUR OUTPUT IMMEDIATELY WITH '# [[Title]]'.\n"
+            f"=========================================\n"
+        )
+            
+        return payload
+
 def prepare_quiz_payload() -> str:
     """Combines metadata and the generated Markdown notes into a single string for the Quiz LLM."""
     meta = st.session_state.get("metadata", {})
