@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from streamlit_player import st_player
 import functions
 import AI_manager as manager
-from shared_ui import render_enhancement_step, render_quiz_step
+from shared_ui import render_enhancement_step, render_quiz_step, get_quiz_payload
 
 # Callbacks for YouTube payload generation
 def yt_get_llm_payload(enhanced=False):
@@ -221,14 +221,19 @@ if st.session_state.video_url and st.session_state.transcript:
             
     # Render exactly like we did in PDF
     render_enhancement_step(
-        doc_id=st.session_state.video_id,
-        doc_title=st.session_state.metadata.get('title', 'YT_Note'),
-        manager=manager,
-        get_payload_func=yt_get_llm_payload
+        doc_id=st.session_state.video_id, 
+        doc_title=st.session_state.metadata.get('title', 'Untitled Video'),
+        manager=manager, 
+        get_payload_func=yt_get_llm_payload,  
+        default_prompt="Obsidian_Academic_Note", 
+        default_temp=0.7,                     
+        default_tokens=8000,
+        CACHE_DIR = "saved_transcripts"
     )
 
     render_quiz_step(
         doc_id=st.session_state.video_id,
         manager=manager,
-        get_quiz_payload_func=yt_get_quiz_payload
+        get_quiz_payload_func=get_quiz_payload,
+        CACHE_DIR = "saved_transcripts"
     )

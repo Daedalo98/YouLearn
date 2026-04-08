@@ -7,7 +7,6 @@ import time
 import functions
 
 # Define constants
-CACHE_DIR = "saved_transcripts"
 PROMPTS_FILE = "system_prompts.json"
 
 def init_shared_state():
@@ -41,7 +40,8 @@ def render_enhancement_step(
     get_payload_func, 
     default_prompt: str,
     default_temp: float,                       
-    default_tokens: int                       
+    default_tokens: int,
+    CACHE_DIR: str                   
     ):
 
     """
@@ -185,7 +185,14 @@ def render_enhancement_step(
                     
                 st.download_button("📥 Download Note as .md", st.session_state.enhanced_text, f"{doc_title}.md", "text/markdown", use_container_width=True)
 
-def render_quiz_step(doc_id: str, manager, get_quiz_payload_func):
+
+def get_quiz_payload():
+    if st.session_state.get('enhanced_text'):
+        return st.session_state.enhanced_text
+    return st.session_state.pdf_markdown
+
+
+def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str):
     """
     Renders Step 3: Metacognitive Exam.
     Takes `get_quiz_payload_func()` to grab text dynamically.

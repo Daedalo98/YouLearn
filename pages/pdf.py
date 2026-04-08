@@ -8,7 +8,7 @@ from pyzotero import zotero
 import pymupdf4llm
 from docling.document_converter import DocumentConverter
 
-from shared_ui import render_enhancement_step, render_quiz_step
+from shared_ui import render_enhancement_step, render_quiz_step, get_quiz_payload
 import AI_manager as manager
 
 # 1. LOAD ENVIRONMENT VARIABLES
@@ -33,9 +33,12 @@ if "pdf_markdown" not in st.session_state:
     st.session_state.pdf_markdown = ""
 
 # --- HELPER FUNCTIONS ---
-def setup_doc_folder(doc_id: str) -> dict:
+def setup_doc_folder(doc_id: str, is_batch: bool = False) -> dict:
     """Creates the specific folder structure for a given PDF."""
-    doc_folder = os.path.join(BASE_PDF_DIR, doc_id)
+    # Route to 'unchecked' if it's a batch process
+    base_dir = os.path.join(BASE_PDF_DIR, "unchecked") if is_batch else BASE_PDF_DIR
+    
+    doc_folder = os.path.join(base_dir, doc_id)
     img_folder = os.path.join(doc_folder, "images")
     os.makedirs(img_folder, exist_ok=True)
     
@@ -46,6 +49,77 @@ def setup_doc_folder(doc_id: str) -> dict:
         "img_folder": img_folder,
         "meta_path": os.path.join(doc_folder, "metadata.json")
     }
+
+def run_batch_pipeline(zot, parser_choice="PyMuPDF4LLM"):
+    """Downloads, parses, and fetches metadata for all Zotero items."""
+    st.info("Fetching all items from Zotero. This might take a moment...")
+    
+    # zot.everything() handles pagination to get the entire library
+    all_items = zot.everything(zot.top()) 
+    total_items = len(all_items)
+    
+    if total_items == 0:
+        st.warning("Your Zotero library is empty.")
+        return
+
+    progress_bar = st.progress(0, text="Starting batch process...")
+    
+    for i, item in enumerate(all_items):
+        item_key = item['key']
+        title = item['data'].get('title', 'Untitled').replace("/", "_").replace("\\", "_")
+        doi = item['data'].get('DOI', '')
+        
+        # Update progress
+        progress_bar.progress((i + 1) / total_items, text=f"Processing {i+1}/{total_items}: {title}")
+        
+        paths = setup_doc_folder(item_key, is_batch=True)
+        
+        # 1. METADATA EXTRACTION
+        metadata = {"title": title, "DOI": doi, "status": "unchecked"}
+        if doi:
+            crossref_data = fetch_crossref_metadata(doi)
+            if crossref_data:
+                metadata.update(crossref_data)
+                
+        with open(paths["meta_path"], "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=4)
+            
+        # 2. PDF DOWNLOAD
+        if not os.path.exists(paths["pdf_path"]):
+            children = zot.children(item_key)
+            pdf = next((c for c in children if c['data'].get('contentType') == 'application/pdf'), None)
+            if pdf:
+                try:
+                    file_bytes = zot.file(pdf['key'])
+                    with open(paths["pdf_path"], "wb") as f:
+                        f.write(file_bytes)
+                except Exception as e:
+                    st.toast(f"Failed to download PDF for {title}: {e}")
+                    continue # Skip to next item if download fails
+            else:
+                continue # Skip items without PDFs
+                
+        # 3. PARSING
+        if not os.path.exists(paths["md_path"]) and os.path.exists(paths["pdf_path"]):
+            try:
+                if "PyMuPDF" in parser_choice:
+                    md_text = pymupdf4llm.to_markdown(
+                        doc=paths["pdf_path"],
+                        write_images=True,
+                        image_path=paths["img_folder"]
+                    )
+                else:
+                    converter = DocumentConverter()
+                    result = converter.convert(paths["pdf_path"])
+                    md_text = result.document.export_to_markdown()
+                    
+                with open(paths["md_path"], "w", encoding="utf-8") as f:
+                    f.write(md_text)
+            except Exception as e:
+                st.toast(f"Failed to parse {title}: {e}")
+
+    progress_bar.progress(1.0, text="✅ Batch processing complete!")
+    st.success(f"Successfully processed your Zotero library into the 'unchecked' folder.")
 
 def display_pdf_iframe(pdf_path: str):
     """Renders a PDF file natively in a Streamlit column using base64."""
@@ -80,9 +154,21 @@ st.title("📄 PDF Pipeline")
 # Only show the ingestion UI if we haven't locked in a document yet
 if not st.session_state.doc_id:
     st.header("Step 1: Document Ingestion")
-    ingest_mode = st.radio("Select Source:", ["Zotero Library", "Manual Upload"])
+    ingest_mode = st.radio("Select Source:", ["Zotero Library", "Manual Upload", "Batch Process Zotero (All)"])
     
-    if ingest_mode == "Zotero Library":
+    if ingest_mode == "Batch Process Zotero (All)":
+        st.warning("⚠️ This will download and parse your ENTIRE Zotero library. The results will be saved in the 'unchecked' folder. This may take a long time depending on your library size.")
+        z_type = st.selectbox("Library Type", ["user", "group"], key="batch_z_type")
+        batch_parser = st.selectbox("Select Batch Parsing Engine", ["PyMuPDF4LLM (Recommended)", "Docling (OCR-heavy)"])
+        
+        if st.button("🚀 Start Full Batch Process", type="primary") and ZOTERO_LIB_ID and ZOTERO_API_KEY:
+            try:
+                zot = zotero.Zotero(ZOTERO_LIB_ID, z_type, ZOTERO_API_KEY)
+                run_batch_pipeline(zot, parser_choice=batch_parser)
+            except Exception as e:
+                st.error(f"Failed to connect to Zotero: {e}")
+
+    elif ingest_mode == "Zotero Library":
         st.info("Using credentials from .env file.")
         z_type = st.selectbox("Library Type", ["user", "group"])
         
@@ -107,12 +193,12 @@ if not st.session_state.doc_id:
                     st.session_state.doc_id = sel_key
                     st.session_state.pdf_metadata = {"title": safe_title, "DOI": item['data'].get('DOI', '')}
 
-                    paths = setup_doc_folder(st.session_state.doc_id)
+                    paths = setup_doc_folder(st.session_state.doc_id, is_batch=False)
                     with open(paths["meta_path"], "w", encoding="utf-8") as f:
                         json.dump(st.session_state.pdf_metadata, f, indent=4)
                                         
                     # 2. Setup folders
-                    paths = setup_doc_folder(st.session_state.doc_id)
+                    paths = setup_doc_folder(st.session_state.doc_id, is_batch=False)
                     
                     # ADD THIS CHECK: If the file is already there, skip downloading.
                     if os.path.exists(paths["pdf_path"]):
@@ -137,8 +223,8 @@ if not st.session_state.doc_id:
             raw_name = uploaded_file.name.rsplit(".", 1)[0]
             st.session_state.doc_id = raw_name
             st.session_state.pdf_metadata = {"title": raw_name}
-            
-            paths = setup_doc_folder(st.session_state.doc_id)
+
+            paths = setup_doc_folder(st.session_state.doc_id, is_batch=False)
             
             # Save uploaded bytes to the dedicated folder
             with open(paths["pdf_path"], "wb") as f:
@@ -149,7 +235,7 @@ if not st.session_state.doc_id:
 # PARSING & SIDE-BY-SIDE VIEW
 # ==========================================
 else:
-    paths = setup_doc_folder(st.session_state.doc_id)
+    paths = setup_doc_folder(st.session_state.doc_id, is_batch=False)
 
     # If we have no markdown in memory, but the file exists on disk, load it!
     if not st.session_state.pdf_markdown and os.path.exists(paths["md_path"]):
@@ -286,16 +372,13 @@ if st.session_state.pdf_markdown:
         get_payload_func=pdf_get_llm_payload,  
         default_prompt="Obsidian_Academic_Note", 
         default_temp=0.7,                     
-        default_tokens=8000
+        default_tokens=8000,
+        CACHE_DIR = paths["folder"]  # Pass the specific folder for this document
     )
-
-    def pdf_get_quiz_payload():
-        if st.session_state.get('enhanced_text'):
-            return st.session_state.enhanced_text
-        return st.session_state.pdf_markdown
     
     render_quiz_step(
         doc_id=st.session_state.doc_id, 
         manager=ai_manager, 
-        get_quiz_payload_func=pdf_get_quiz_payload
+        get_quiz_payload_func=get_quiz_payload,
+        CACHE_DIR = paths["folder"]  # Pass the specific folder for this document
     )
