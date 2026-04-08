@@ -9,3 +9,11 @@ pyzotero
 docling
 requests
 pymupdf4llm
+langchain 
+langchain-community
+langchain-openai
+langchain-huggingface 
+langchain-ollama 
+langchain-chroma
+chromadb 
+tiktoken
