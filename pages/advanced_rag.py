@@ -602,3 +602,167 @@ else:
 
         if st.session_state.curated_contexts:
             st.success(f"🎉 **Ready for Generation:** You have curated {len(st.session_state.curated_contexts)} chunks of context.")
+
+
+
+# ---------------------------------------------------------
+# STEP 4: FINAL SYNTHESIS & AUTOMATED CITATIONS
+# ---------------------------------------------------------
+st.header("Step 4: Final Synthesis")
+st.markdown("Generate a highly accurate academic response based *only* on your explicitly approved text chunks.")
+
+# 1. Block the UI if no context is curated
+if 'curated_contexts' not in st.session_state or not st.session_state.curated_contexts:
+    st.info("⚠️ Please approve at least one chunk in Step 3 to proceed to generation.")
+else:
+    with st.container(border=True):
+        col_gen_prompt, col_gen_output = st.columns([1, 2])
+        
+        with col_gen_prompt:
+            st.subheader("Synthesis Settings")
+            
+            # --- Model & Generation Params ---
+            with st.expander("🧠 Active Models & Gen Options", expanded=True):
+                available_models = ai_manager.get_models()
+                default_models = ["No models found"] if not available_models else available_models
+                gen_idx = default_models.index("granite4:7b-a1b-h") if "granite4:7b-a1b-h" in default_models else 0
+
+                synth_model = st.selectbox("Text Generation Model", default_models, index=gen_idx, key="synth_model_sel")
+                st.divider()
+
+                synth_temp = st.number_input("Temperature", 0.0, 2.0, 0.3, 0.1, key="synth_temp", help="Lower temperature (e.g., 0.3) is better for factual, academic synthesis.")
+                synth_tokens = st.number_input("Max Tokens", 100, 10000, 2000, 100, key="synth_tokens")
+                synth_stream = st.toggle("Streaming Generation", value=True, key="synth_stream")
+
+            # --- System Prompt Management ---
+            st.subheader("System Prompts")
+            try:
+                prompts_dict = functions.load_prompts(PROMPTS_FILE)
+            except Exception:
+                prompts_dict = {"Academic_Synthesis": "You are an expert academic writer. Synthesize the provided context to answer the user's query. Rely STRICTLY on the provided context."}
+            
+            prompt_names = list(prompts_dict.keys())
+            default_prompt = "Academic_generator"
+            default_idx = prompt_names.index(default_prompt) if default_prompt in prompt_names else 0
+            
+            if "synth_prompt_area" not in st.session_state:
+                st.session_state.synth_prompt_area = prompts_dict.get(prompt_names[default_idx], "")
+
+            def sync_synth_prompt():
+                selected = st.session_state.synth_prompt_sel
+                st.session_state.synth_prompt_area = prompts_dict.get(selected, "")
+
+            selected_synth_prompt = st.selectbox(
+                "Active Prompt", 
+                prompt_names, 
+                index=default_idx, 
+                key="synth_prompt_sel",
+                on_change=sync_synth_prompt
+            )
+            
+            system_prompt_synth = st.text_area("Edit Current Prompt", height=200, key="synth_prompt_area")
+            
+            with st.expander("Save / Modify Prompt"):
+                new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_synth_prompt, key="synth_save_name")
+                if st.button("Save Prompt", use_container_width=True, key="synth_save_btn"):
+                    if new_prompt_name and system_prompt_synth:
+                        try:
+                            functions.save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt_synth)
+                            st.success("Saved!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to save prompt: {e}")
+
+            # --- EXECUTE GENERATION ---
+            if st.button("🚀 Generate Final Academic Text", use_container_width=True, type="primary"):
+                
+                # 1. Prepare the exact context payload strictly from approved chunks
+                context_blocks = []
+                citations_list = []
+                
+                for idx, data in st.session_state.curated_contexts.items():
+                    chunk_text = data["text"]
+                    citation = data["citation"]
+                    source_name = data["source"]
+                    
+                    context_blocks.append(f"--- SOURCE: {source_name} ---\n{chunk_text}\n")
+                    
+                    # Deduplicate citations so we don't print the same DOI 5 times
+                    if citation not in citations_list:
+                        citations_list.append(citation)
+                        
+                compiled_context = "\n".join(context_blocks)
+                
+                # Build the final prompt payload sent to the LLM
+                final_llm_payload = f"""
+                    USER QUERY:
+                    {st.session_state.final_search_query}
+
+                    RELEVANT CONTEXT:
+                    {compiled_context}
+
+                    Please provide a comprehensive academic response based strictly on the provided context above. Do not include a reference list, I will append that manually.
+                    """
+                
+                st.session_state.generated_synthesis = ""
+                st.session_state.final_citations = citations_list
+                
+                text_placeholder = st.empty()
+                
+                # 2. Call the LLM
+                if synth_stream:
+                    raw_generated_text = ""
+                    with st.status(f"Synthesizing using {synth_model}...", expanded=True) as status:
+                        try:
+                            for chunk in ai_manager.generate_stream(final_llm_payload, system_prompt_synth, synth_model, synth_temp, synth_tokens):
+                                raw_generated_text += chunk
+                                text_placeholder.markdown(f"<div style='font-size: {st.session_state.get('global_zoom', 16)}px;'>{raw_generated_text}▌</div>", unsafe_allow_html=True) 
+                            status.update(label="Generation Complete!", state="complete", expanded=False)
+                        except Exception as e:
+                            st.error(f"Generation error: {e}")
+                    text_placeholder.empty()
+                else:
+                    with st.status(f"Generating Output...", expanded=True) as status:
+                        try:
+                            raw_generated_text = ai_manager.generate_sync(final_llm_payload, system_prompt_synth, synth_model, synth_temp, synth_tokens)
+                            status.update(label="Complete!", state="complete", expanded=False)
+                        except Exception as e:
+                            st.error(f"Generation error: {e}")
+                            raw_generated_text = ""
+
+                # 3. PROGRAMMATICALLY APPEND CITATIONS (Python-side, zero hallucination)
+                if raw_generated_text:
+                    formatted_citations = "\n\n### References\n"
+                    for i, cit in enumerate(st.session_state.final_citations):
+                        formatted_citations += f"{i+1}. {cit}\n"
+                    
+                    # Bind the combined text to session state
+                    st.session_state.generated_synthesis = raw_generated_text + formatted_citations
+
+        # --- FINAL OUTPUT RENDERING ---
+        with col_gen_output:
+            st.subheader("Final Academic Document")
+            st.slider("🔍 Zoom Text Size", min_value=10, max_value=50, value=st.session_state.get('global_zoom', 16), key="zoom_step4", on_change=sync_zoom, args=("zoom_step4",))
+            
+            if st.session_state.get('generated_synthesis'):
+                mode_edit = st.toggle("✏️ Edit Final Document", value=st.session_state.get('is_editing_synth', False), key="toggle_edit_synth")
+                st.session_state.is_editing_synth = mode_edit
+                
+                if st.session_state.is_editing_synth:
+                    edited_doc = st.text_area("Edit Final Document", st.session_state.generated_synthesis, height=600, label_visibility="collapsed", key="final_doc_edit")
+                    if st.button("Save Document Edits", type="primary", key="save_final_edits"):
+                        st.session_state.generated_synthesis = edited_doc
+                        st.toast("Document saved!", icon="✅")
+                        st.session_state.is_editing_synth = False
+                        st.rerun()
+                else:
+                    st.markdown(f"<div style='font-size: {st.session_state.get('global_zoom', 16)}px;'>{st.session_state.generated_synthesis}</div>", unsafe_allow_html=True)
+                    
+                # Download Button
+                st.download_button(
+                    label="📥 Download Academic Synthesis (.md)", 
+                    data=st.session_state.generated_synthesis, 
+                    file_name="Advanced_RAG_Synthesis.md", 
+                    mime="text/markdown", 
+                    use_container_width=True
+                )
