@@ -5,6 +5,7 @@ from streamlit_player import st_player
 import functions
 import AI_manager as manager
 from shared_ui import render_enhancement_step, render_quiz_step, get_quiz_payload
+import spreader
 
 # Callbacks for YouTube payload generation
 def yt_get_llm_payload(enhanced=False):
@@ -230,6 +231,22 @@ if st.session_state.video_url and st.session_state.transcript:
         default_tokens=8000,
         CACHE_DIR = "saved_transcripts"
     )
+
+
+    # ==========================================
+    # NEW: SPREADER MODULE INJECTION
+    # ==========================================
+    # We pass the 'enhanced_text' from session state into the spreader.
+    # It will only show up as an expander.
+    st.markdown("---") # Add a nice visual divider
+    st.header("Spreader")
+    
+    # Safely get enhanced text. If it doesn't exist yet, pass an empty string.
+    current_enhanced_text = st.session_state.get("enhanced_text", "")
+    spreader.render_spreader_module(current_enhanced_text) # <-- 2. INJECT HERE
+
+    # ==========================================
+
 
     render_quiz_step(
         doc_id=st.session_state.video_id,

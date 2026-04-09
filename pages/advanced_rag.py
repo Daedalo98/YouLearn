@@ -456,7 +456,7 @@ else:
             st.markdown("**Base Search Config**")
             top_k = st.number_input("Initial Retrieval Top-K", min_value=1, max_value=50, value=10, help="How many raw chunks to pull from the DB.")
             sim_threshold = st.slider("Similarity Threshold", min_value=0.0, max_value=1.0, value=0.5, step=0.05, help="Minimum relevance score (0-1) to be considered.")
-            alpha_weight = st.slider("Hybrid Alpha (α)", min_value=0.0, max_value=1.0, value=1.0, step=0.1, help="0.0 = Pure Keyword | 1.0 = Pure Semantic.")
+            alpha_weight = st.slider("Hybrid Alpha (α)", min_value=0.0, max_value=1.0, value=0.5, step=0.1, help="0.0 = Pure Keyword | 1.0 = Pure Semantic.")
             
         with col_ret2:
             st.markdown("**Query Transformations**")
@@ -600,6 +600,15 @@ else:
                 render_chunk_ui(doc, score, real_metadata, citation_text, filename, chunk_index, use_llm_rerank)
                 chunk_index += 1
 
+        # --- FOOTER FOR STEP 3 ---
+        st.divider()
+        st.info("💡 Because editing chunks is isolated for smooth typing, you must lock your selections to update the final step.")
+        
+        # This button forces the whole page to refresh, unlocking Step 4
+        if st.button("Lock Curated Context & Proceed to Synthesis ➡️", type="primary", use_container_width=True):
+            st.rerun()
+            
+        # This will now correctly display after the rerun
         if st.session_state.curated_contexts:
             st.success(f"🎉 **Ready for Generation:** You have curated {len(st.session_state.curated_contexts)} chunks of context.")
 
@@ -766,3 +775,20 @@ else:
                     mime="text/markdown", 
                     use_container_width=True
                 )
+
+
+
+    # ==========================================
+    # NEW: SPREADER MODULE INJECTION
+    # ==========================================
+    # We pass the 'enhanced_text' from session state into the spreader.
+    # It will only show up as an expander.
+    st.markdown("---") # Add a nice visual divider
+    st.header("Spreader")
+    import spreader
+    
+    # Safely get enhanced text. If it doesn't exist yet, pass an empty string.
+    current_enhanced_text = st.session_state.generated_synthesis if st.session_state.generated_synthesis else "No enhanced text generated yet. Complete Step 4 to see the Spreader in action!"
+    spreader.render_spreader_module(current_enhanced_text) # <-- 2. INJECT HERE
+
+    # ==========================================
