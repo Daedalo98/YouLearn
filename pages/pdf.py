@@ -34,9 +34,9 @@ if "pdf_markdown" not in st.session_state:
 
 # --- HELPER FUNCTIONS ---
 def setup_doc_folder(doc_id: str, is_batch: bool = False) -> dict:
-    """Creates the specific folder structure for a given PDF."""
-    # Route to 'unchecked' if it's a batch process
-    base_dir = os.path.join(BASE_PDF_DIR, "unchecked") if is_batch else BASE_PDF_DIR
+    base_dir = os.path.join(os.getcwd(), BASE_PDF_DIR) # Use absolute path
+    if is_batch:
+        base_dir = os.path.join(base_dir, "unchecked")
     
     doc_folder = os.path.join(base_dir, doc_id)
     img_folder = os.path.join(doc_folder, "images")
@@ -46,7 +46,7 @@ def setup_doc_folder(doc_id: str, is_batch: bool = False) -> dict:
         "folder": doc_folder,
         "pdf_path": os.path.join(doc_folder, f"{doc_id}.pdf"),
         "md_path": os.path.join(doc_folder, f"{doc_id}.md"),
-        "img_folder": img_folder,
+        "img_folder": img_folder, # Ensure this is passed correctly
         "meta_path": os.path.join(doc_folder, "metadata.json")
     }
 
@@ -149,10 +149,12 @@ def fetch_crossref_metadata(doi: str) -> dict:
 # ==========================================
 # UI LAYOUT
 # ==========================================
-st.title("📄 PDF Pipeline")
 
-# Only show the ingestion UI if we haven't locked in a document yet
-if not st.session_state.doc_id:
+# --- Sidebar ---
+with st.sidebar:
+    st.title("⚙️ PDF Settings")
+    st.markdown("Use the sidebar to ingest a new PDF document either from your Zotero library or by manual upload. Once ingested, you can parse the document and enhance it with AI-generated notes and quizzes.")
+
     st.header("Step 1: Document Ingestion")
     ingest_mode = st.radio("Select Source:", ["Zotero Library", "Manual Upload", "Batch Process Zotero (All)"])
     
@@ -171,11 +173,12 @@ if not st.session_state.doc_id:
     elif ingest_mode == "Zotero Library":
         st.info("Using credentials from .env file.")
         z_type = st.selectbox("Library Type", ["user", "group"])
+        LIMIT = st.number_input("Number of Recent Items to Fetch", min_value=1, max_value=10000, value=20, step=1)
         
         if st.button("Fetch Recent Items") and ZOTERO_LIB_ID and ZOTERO_API_KEY:
             try:
                 zot = zotero.Zotero(ZOTERO_LIB_ID, z_type, ZOTERO_API_KEY)
-                st.session_state.zotero_items = zot.top(limit=50)
+                st.session_state.zotero_items = zot.top(limit=LIMIT)
             except Exception as e:
                 st.error(f"Failed to connect to Zotero: {e}")
                 
@@ -219,14 +222,14 @@ if not st.session_state.doc_id:
     elif ingest_mode == "Manual Upload":
         uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
         if uploaded_file and st.button("Initialize PDF", type="primary"):
-            # Use filename without extension as the ID
+            # CLEAN THE FILENAME: Replace spaces and dots
             raw_name = uploaded_file.name.rsplit(".", 1)[0]
-            st.session_state.doc_id = raw_name
+            safe_name = "".join([c if c.isalnum() else "_" for c in raw_name])
+            
+            st.session_state.doc_id = safe_name
             st.session_state.pdf_metadata = {"title": raw_name}
 
             paths = setup_doc_folder(st.session_state.doc_id, is_batch=False)
-            
-            # Save uploaded bytes to the dedicated folder
             with open(paths["pdf_path"], "wb") as f:
                 f.write(uploaded_file.getvalue())
             st.rerun()
@@ -234,7 +237,8 @@ if not st.session_state.doc_id:
 # ==========================================
 # PARSING & SIDE-BY-SIDE VIEW
 # ==========================================
-else:
+# Only show the ingestion UI if we haven't locked in a document yet
+if st.session_state.doc_id:
     paths = setup_doc_folder(st.session_state.doc_id, is_batch=False)
 
     # If we have no markdown in memory, but the file exists on disk, load it!
@@ -264,11 +268,12 @@ else:
             if st.button("▶️ Run Parser", use_container_width=True):
                 with st.spinner(f"Parsing with {parser_choice}..."):
                     if "PyMuPDF" in parser_choice:
-                        # PyMuPDF extracts markdown AND saves images automatically!
+                        # Important: image_path should usually be the subfolder name 
+                        # relative to where the MD file is saved for the links to work.
                         md_text = pymupdf4llm.to_markdown(
                             doc=paths["pdf_path"],
                             write_images=True,
-                            image_path=paths["img_folder"]
+                            image_path="images" # Use a relative string here
                         )
                         st.session_state.pdf_markdown = md_text
                     
@@ -338,8 +343,8 @@ else:
                     f.write(st.session_state.pdf_markdown)
             
             if is_preview_mode:
-                # Render the markdown visually
                 with st.container(height=650, border=True):
+                    # This helps Streamlit find the images in the local directory
                     st.markdown(st.session_state.pdf_markdown, unsafe_allow_html=True)
             else:
                 # Editable text area synced to disk
