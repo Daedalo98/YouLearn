@@ -1,111 +1,218 @@
 # YouLearn
 
-## 🚀 Project Overview
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/)
 
-YouLearn is a Streamlit-based app for transforming YouTube video transcripts into structured notes and quiz questions using LLMs (Google Gemini or local Ollama via API). It supports:
+YouLearn is a comprehensive AI-powered learning platform built with Streamlit that transforms educational content from YouTube videos and academic PDFs into structured, interactive learning materials. It combines Large Language Models (LLMs) with Retrieval-Augmented Generation (RAG) to create personalized learning experiences with note generation, quiz creation, and speed-reading capabilities.
 
-- Fetching and caching YouTube transcripts (via `transcriptapi.com`)
-- Playback with timestamp synchronized editing
-- Transcript editing + markdown preview
-- LLM-based 1) Obsidian-style note generation and 2) quiz question generation
-- Persistent prompt templates stored in `system_prompts.json`
+## 🌟 Key Features
 
-## 📁 Key Files
+### 📺 YouTube Learning Pipeline
+- **Transcript Processing**: Fetch and cache YouTube transcripts with automatic metadata extraction
+- **Interactive Editing**: Timestamp-synchronized video playback with inline transcript editing
+- **AI Enhancement**: Convert raw transcripts into structured Obsidian-style markdown notes
+- **Quiz Generation**: Create adaptive multiple-choice quizzes from enhanced content
+- **Speed Reading**: Built-in RSVP (Rapid Serial Visual Presentation) module for accelerated comprehension
 
-- `app.py`: Main Streamlit app UI + app flow
-- `functions.py`: transcript fetch/save/format + prompts + quiz context + helpers
-- `AI_manager.py`: AI provider client wrapper (Gemini + Ollama fallback)
-- `system_prompts.json`: prompt definitions for note and quiz generation
-- `.env.example`: required API keys (uname + track configs)
-- `saved_transcripts/`: local cached transcripts and enhancements
+### 📄 PDF Processing & Academic Integration
+- **Zotero Integration**: Batch download and process PDFs from Zotero libraries
+- **Advanced Parsing**: Multiple PDF-to-markdown conversion strategies (PyMuPDF4LLM, Docling)
+- **Metadata Enrichment**: Automatic DOI lookup via Crossref API for academic papers
+- **Image Extraction**: Preserve inline images and figures during conversion
 
-## ⚙️ Prerequisites
+### 🔍 Advanced RAG (Retrieval-Augmented Generation)
+- **Vector Database**: ChromaDB integration with configurable chunking strategies
+- **Semantic Search**: Multi-source content retrieval across documents
+- **Flexible Embeddings**: Support for both cloud (Gemini) and local (Ollama) embedding models
+- **Smart Indexing**: Incremental updates with metadata-aware deduplication
 
+### 🤖 AI-Powered Enhancement
+- **Multi-Provider LLM Support**: Google Gemini and Ollama integration
+- **Customizable Prompts**: Persistent prompt templates for different content types
+- **Streaming Generation**: Real-time content generation with adjustable parameters
+- **No-Hallucination Guardrails**: Academic-focused prompts ensuring factual accuracy
+
+## 🏗️ Architecture
+
+```
+YouLearn/
+├── main.py                 # Multi-page Streamlit orchestrator
+├── pages/
+│   ├── youtube.py          # YouTube transcript pipeline
+│   ├── pdf.py             # PDF processing & Zotero integration
+│   └── advanced_rag.py    # Vector database configuration
+├── AI_manager.py          # Unified LLM abstraction layer
+├── functions.py           # Utility functions for data processing
+├── shared_ui.py           # Reusable UI components
+├── spreader.py            # Speed-reading RSVP module
+├── system_prompts.json    # Persistent AI prompt templates
+└── requirements.txt       # Python dependencies
+```
+
+## 🚀 Quick Start
+
+### Prerequisites
 - Python 3.10+
-- `pip` and optional `virtualenv`
-- Internet access for YouTube + transcript API
-- LLM provider credentials:
-  - `TRANSCRIPT_API_KEY` from https://transcriptapi.com
-  - `GEMINI_API_KEY` for Google GenAI (or local Ollama instance at `http://localhost:11434`)
+- Internet connection for API access
+- API keys for transcript and LLM services
 
-## 🛠️ Setup steps
+### Installation
 
-1. Clone repository (if not already):
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/Daedalo98/YouLearn.git
+   cd YouLearn
+   ```
+
+2. **Create virtual environment**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+3. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Configure environment variables**
+   ```bash
+   cp .env.example .env
+   ```
+
+   Edit `.env` with your API keys:
+   ```ini
+   # Required
+   TRANSCRIPT_API_KEY=your_transcriptapi_key
+   GEMINI_API_KEY=your_gemini_api_key
+
+   # Optional (for Zotero integration)
+   ZOTERO_LIB_ID=your_zotero_library_id
+   ZOTERO_API_KEY=your_zotero_api_key
+   ```
+
+### Running the Application
 
 ```bash
-git clone https://github.com/Daedalo98/YouLearn
-cd YouLearn
+streamlit run main.py
 ```
 
-2. Create virtual env and install deps:
+Navigate to `http://localhost:8501` in your browser.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
+## 📖 Usage Guide
 
-3. Copy environment template:
+### YouTube Learning Pipeline
 
-```bash
-cp .env.example .env
-```
+1. **Select YouTube Page** from the sidebar navigation
+2. **Enter YouTube URL** (supports standard, shorts, and live videos)
+3. **Fetch Transcript** - Automatically downloads and caches transcript data
+4. **Edit Transcript** - Use the dual-pane interface to edit segments with timestamp sync
+5. **Enhance Content** - Select a prompt template and generate structured notes
+6. **Take Quiz** - Generate and answer multiple-choice questions
+7. **Speed Read** - Use the Spreader module for accelerated reading
 
-4. Edit `.env` with your keys:
+### PDF Processing Pipeline
 
-```ini
-TRANSCRIPT_API_KEY=your_actual_transcript_api_key
-GEMINI_API_KEY=your_actual_gemini_api_key
-```
+1. **Navigate to PDF Page**
+2. **Connect Zotero** (optional) - Provide library credentials for batch processing
+3. **Upload PDFs** or process Zotero library
+4. **Parse Documents** - Choose between PyMuPDF4LLM or Docling parsers
+5. **Review Enhanced Markdown** - Edit and download structured content
+6. **Generate Quizzes** - Create interactive assessments
 
-If you don’t have Gemini, run Ollama locally and set model names in the app UI.
+### Advanced RAG Configuration
 
-## ▶️ Running the app
+1. **Select RAG Page**
+2. **Choose Data Source** - Point to a directory containing markdown files
+3. **Configure Chunking** - Select splitting strategy and parameters
+4. **Set Embedding Model** - Choose between Gemini or Ollama embeddings
+5. **Build Vector Database** - Create or update ChromaDB index
+6. **Query Content** - Perform semantic search across your knowledge base
 
-```bash
-streamlit run app.py
-```
+## ⚙️ Configuration
 
-Then open the local URL, usually `http://localhost:8501`.
+### API Keys Setup
 
-## 🧩 Usage workflow
+- **TRANSCRIPT_API_KEY**: Obtain from [transcriptapi.com](https://transcriptapi.com)
+- **GEMINI_API_KEY**: Get from [Google AI Studio](https://makersuite.google.com/app/apikey)
+- **ZOTERO_API_KEY**: Generate in your [Zotero account settings](https://www.zotero.org/settings/keys)
 
-1. In the sidebar, paste a YouTube URL (standard, short, shorts, or live link).  
-2. Click `Fetch & Process Transcript`. This stores in `saved_transcripts/{video_id}.json`.  
-3. Edit transcript segments inline, adjust time anchor from 2-column timeline, save auto-updates cache.  
-4. Choose a prompt from `system_prompts.json` and adjust text in the prompt editor.  
-5. Click `Generate Note` for Obsidian-style summary from LLM.  
-6. Use quiz mode in the app to generate multiple-choice questions from notes and the prompt.
+### System Prompts
 
-## 🗂️ `system_prompts.json` format
+Customize `system_prompts.json` to define prompt templates:
 
 ```json
 {
-    "Obsidian_Default": "You are an expert knowledge manager. Process the provided YouTube video metadata and transcript into a highly structured, Obsidian-style Markdown note.\n\nRequirements:\n0. Include a title at the top using the video title (# video title).\n1. Include a YAML frontmatter block with: tags (e.g., #tag1, #tag2), aliases, author, date, and source url.\n2. Create a brief 'Summary' section.\n3. Create a 'Key Insights' section using bullet points.\n4. Format the main concepts under clear header sections.\n5. Include a 'Related / Connections' section at the bottom for internal wiki linking (e.g., [[Concept Name]]).\n6. Do NOT hallucinate. Rely strictly on the provided transcript.",
-    "Quiz_Generator": "You are an adaptive expert educator. Based on the provided notes and the history of previous questions, generate EXACTLY ONE new multiple-choice question.\nEnsure the question is different from previous ones. If the user got previous questions wrong, focus on those concepts.\nYou MUST output ONLY a valid JSON object. No markdown, no arrays, no conversational text.\nFormat strictly like this:\n{\n  \"question\": \"What is the main topic?\",\n  \"options\": [\"A\", \"B\", \"C\", \"D\"],\n  \"answer\": \"A\",\n  \"explanation\": \"Because the notes state...\"\n}"
+  "Obsidian_Default": "You are an expert knowledge manager...",
+  "Academic_Note": "Process academic content into structured notes...",
+  "Quiz_Generator": "Generate educational multiple-choice questions..."
 }
 ```
 
-## 🧪 Validation checks
+### LLM Configuration
 
-- `test whether .env keys are set`: The app warns when missing.
-- `TRANSCRIPT_API_KEY` used for transcript API.
-- `GEMINI_API_KEY` used by `AI_manager.Manager` for Google GenAI.
+- **Primary**: Google Gemini (gemini-2.5-flash, gemini-2.5-pro)
+- **Fallback**: Local Ollama instance (`http://localhost:11434`)
+- **Embeddings**: Gemini embeddings or Ollama models
 
-## 🛡️ Common issues
+## 🛠️ Technical Details
 
-- `video_id` mismatch / invalid YouTube URL: only well-formed 11-char IDs resolve.
-- `Cannot connect to Ollama` if local model server unavailable.
-- `JSON parse errors in system_prompts.json`: ensure valid JSON with `"` and no trailing commas.
+### Dependencies
+- **Streamlit**: Web application framework
+- **LangChain**: RAG pipeline orchestration
+- **ChromaDB**: Vector database for semantic search
+- **PyMuPDF4LLM**: PDF processing with image extraction
+- **PyZotero**: Zotero library integration
+- **YouTube Transcript API**: Video transcript fetching
 
-## 💡 Enhancements
+### Data Storage
+- **Transcripts**: `saved_transcripts/{video_id}.json`
+- **PDFs**: `saved_pdfs/{doc_id}/` with metadata and images
+- **Vector DB**: ChromaDB instances in `chroma_db/` directories
+- **Prompts**: Persistent templates in `system_prompts.json`
 
-- Add logging middleware to persist app events
-- Support batch transcript export `.md` or `.csv`
-- Add auth and user settings for persistent prompt stores
+### Performance Features
+- **Caching**: Automatic caching of transcripts and metadata
+- **Streaming**: Real-time LLM generation with progress indicators
+- **Background Processing**: Asynchronous quiz generation
+- **Smart Deduplication**: Metadata-aware vector database updates
+
+## 🙏 Acknowledgments
+
+- Built with [Streamlit](https://streamlit.io/)
+- Powered by [Google Gemini](https://ai.google.dev/) and [Ollama](https://ollama.ai/)
+- PDF processing via [PyMuPDF](https://pymupdf.readthedocs.io/)
+- Vector search with [ChromaDB](https://www.trychroma.com/)
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**"Cannot fetch transcript"**
+- Verify `TRANSCRIPT_API_KEY` is correct
+- Check internet connection
+- Ensure YouTube video has captions available
+
+**"LLM connection failed"**
+- For Gemini: Verify `GEMINI_API_KEY`
+- For Ollama: Ensure Ollama is running locally
+- Check API rate limits and quotas
+
+**"Zotero connection error"**
+- Verify library ID and API key
+- Ensure Zotero library is publicly accessible or API key has correct permissions
+
+**Performance Issues**
+- Reduce chunk size in RAG configuration
+- Use local Ollama for embeddings to reduce API calls
+- Clear cache directories if storage is full
+
+### Getting Help
+
+- Check existing [Issues](https://github.com/Daedalo98/YouLearn/issues) on GitHub
+- Create a new issue with detailed error logs
+- Include your system information and configuration (without API keys)
 
 ---
 
-**Note:** This README is generated from existing project code; adjust links and example keys for your deployment environment.
+**Transform your learning experience with AI-powered content enhancement and interactive discovery!** 🚀
 
