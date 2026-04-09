@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import re
 import json
 
@@ -323,4 +322,4 @@ def render_spreader_module(enhanced_text):
         </html>
         """
 
-        components.html(html_code, height=380)
+        st.iframe.html(html_code, height=380)

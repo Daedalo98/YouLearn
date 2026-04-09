@@ -613,7 +613,6 @@ else:
             st.success(f"🎉 **Ready for Generation:** You have curated {len(st.session_state.curated_contexts)} chunks of context.")
 
 
-
 # ---------------------------------------------------------
 # STEP 4: FINAL SYNTHESIS & AUTOMATED CITATIONS
 # ---------------------------------------------------------
@@ -694,7 +693,7 @@ else:
                     citation = data["citation"]
                     source_name = data["source"]
                     
-                    context_blocks.append(f"--- SOURCE: {source_name} ---\n{chunk_text}\n")
+                    context_blocks.append(f"\n{chunk_text}\n")
                     
                     # Deduplicate citations so we don't print the same DOI 5 times
                     if citation not in citations_list:
@@ -710,7 +709,7 @@ else:
                     RELEVANT CONTEXT:
                     {compiled_context}
 
-                    Please provide a comprehensive academic response based strictly on the provided context above. Do not include a reference list, I will append that manually.
+                    Please provide a comprehensive response based strictly on the provided context above. Do not include a reference list.
                     """
                 
                 st.session_state.generated_synthesis = ""
