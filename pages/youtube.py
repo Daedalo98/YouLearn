@@ -148,109 +148,109 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 # ==========================================
 
-if st.session_state.video_url and st.session_state.transcript:
-    
-    # Display Video Info
-    if "metadata" in st.session_state and st.session_state.metadata:
-        meta = st.session_state.metadata
-        st.markdown(f"### 📺 {meta.get('title', 'Unknown Title')}")
-        st.caption(f"**Channel:** {meta.get('author_name', 'Unknown')} | **Uploaded:** {meta.get('upload_date', 'Unknown')} | **Source:** [Link]({meta.get('video_url', '')})")
-        st.divider()
-    
-    # --- NEW: Global Read/Edit Toggle & Zoom Control ---
-    st.markdown("**Markdown Supported:** Use `**bold**`, `*italic*`, `# Heading`, or `<u>underline</u>`")
-    
-    # We put the toggle and the zoom slider side-by-side
-    ctrl_col1, ctrl_col2 = st.columns([1, 1])
-    with ctrl_col1:
-        is_preview_mode = st.toggle("👁️ Preview Formatting Mode", value=False)
+#if st.session_state.video_url and st.session_state.transcript:
+
+# Display Video Info
+if "metadata" in st.session_state and st.session_state.metadata:
+    meta = st.session_state.metadata
+    st.markdown(f"### 📺 {meta.get('title', 'Unknown Title')}")
+    st.caption(f"**Channel:** {meta.get('author_name', 'Unknown')} | **Uploaded:** {meta.get('upload_date', 'Unknown')} | **Source:** [Link]({meta.get('video_url', '')})")
+    st.divider()
+
+# --- NEW: Global Read/Edit Toggle & Zoom Control ---
+st.markdown("**Markdown Supported:** Use `**bold**`, `*italic*`, `# Heading`, or `<u>underline</u>`")
+
+# We put the toggle and the zoom slider side-by-side
+ctrl_col1, ctrl_col2 = st.columns([1, 1])
+with ctrl_col1:
+    is_preview_mode = st.toggle("👁️ Preview Formatting Mode", value=False)
+with ctrl_col2:
+    # Slider controls the font size from 10px up to a massive 50px
     with ctrl_col2:
-        # Slider controls the font size from 10px up to a massive 50px
-        with ctrl_col2:
-            st.slider("🔍 Zoom Text Size (px)", min_value=10, max_value=50, value=st.session_state.global_zoom, key="zoom_step1", on_change=sync_zoom, args=("zoom_step1",), label_visibility="collapsed")
-            
-    transcript_container = st.container(height=600)
-    
-    with transcript_container:
-        for i, segment in enumerate(st.session_state.transcript):
-            
-            # Failsafe: Ensure segment is actually a dictionary
-            if not isinstance(segment, dict):
-                continue
-                
-            start_sec = segment.get('start', 0.0)
-            timestamp_str = functions.format_timestamp(start_sec)
-            current_text = str(segment.get('text', '')) # Force as string
-            
-            # Simple 2-column layout for each row
-            # adaptively adjust column widths based on content (e.g., if timestamp is long, give it more space)
-            # Calculate dynamic column widths based on text length
-            text_length = len(current_text)
-            btn_ratio = 0.15 if text_length < 100 else 0.12
-            text_ratio = 1 - btn_ratio
-            btn_col, text_col = st.columns([btn_ratio, text_ratio])
-            
-            with btn_col:
-                if st.button(f"⏱️ {timestamp_str}", key=f"btn_{i}", use_container_width=True):
-                    st.session_state.start_time = start_sec
-                    st.rerun()
-            
-            with text_col:
-                def update_text(index=i):
-                    st.session_state.transcript[index]['text'] = st.session_state[f"text_{index}"]
-                    functions.save_edits_to_disk(CACHE_DIR)
-                    st.toast("💾 Auto-saved!", icon="✅")
+        st.slider("🔍 Zoom Text Size (px)", min_value=10, max_value=50, value=st.session_state.global_zoom, key="zoom_step1", on_change=sync_zoom, args=("zoom_step1",), label_visibility="collapsed")
+        
+transcript_container = st.container(height=600)
 
-                # If the toggle is ON, render the beautiful formatted text
-                if is_preview_mode:
-                    # Use a markdown block to render sizes, bold, italic, etc.
-                    st.markdown(current_text, unsafe_allow_html=True)
-                
-                # If the toggle is OFF, show the raw editor
-                else:
-                    st.text_area(
-                        "Edit Text", 
-                        value=current_text, 
-                        key=f"text_{i}", 
-                        label_visibility="collapsed",
-                        height=100,
-                        on_change=update_text
-                    )
+with transcript_container:
+    for i, segment in enumerate(st.session_state.transcript):
+        
+        # Failsafe: Ensure segment is actually a dictionary
+        if not isinstance(segment, dict):
+            continue
+            
+        start_sec = segment.get('start', 0.0)
+        timestamp_str = functions.format_timestamp(start_sec)
+        current_text = str(segment.get('text', '')) # Force as string
+        
+        # Simple 2-column layout for each row
+        # adaptively adjust column widths based on content (e.g., if timestamp is long, give it more space)
+        # Calculate dynamic column widths based on text length
+        text_length = len(current_text)
+        btn_ratio = 0.15 if text_length < 100 else 0.12
+        text_ratio = 1 - btn_ratio
+        btn_col, text_col = st.columns([btn_ratio, text_ratio])
+        
+        with btn_col:
+            if st.button(f"⏱️ {timestamp_str}", key=f"btn_{i}", use_container_width=True):
+                st.session_state.start_time = start_sec
+                st.rerun()
+        
+        with text_col:
+            def update_text(index=i):
+                st.session_state.transcript[index]['text'] = st.session_state[f"text_{index}"]
+                functions.save_edits_to_disk(CACHE_DIR)
+                st.toast("💾 Auto-saved!", icon="✅")
 
+            # If the toggle is ON, render the beautiful formatted text
+            if is_preview_mode:
+                # Use a markdown block to render sizes, bold, italic, etc.
+                st.markdown(current_text, unsafe_allow_html=True)
             
-            st.markdown("<hr style='margin: 0.2em 0px; border-top: 1px dashed #ddd;'>", unsafe_allow_html=True)
-            
-    # Render exactly like we did in PDF
-    render_enhancement_step(
-        doc_id=st.session_state.video_id, 
-        doc_title=st.session_state.metadata.get('title', 'Untitled Video'),
-        manager=manager, 
-        get_payload_func=yt_get_llm_payload,  
-        default_prompt="Obsidian_Academic_Note", 
-        default_temp=0.7,                     
-        default_tokens=8000,
-        CACHE_DIR = "saved_transcripts"
-    )
+            # If the toggle is OFF, show the raw editor
+            else:
+                st.text_area(
+                    "Edit Text", 
+                    value=current_text, 
+                    key=f"text_{i}", 
+                    label_visibility="collapsed",
+                    height=100,
+                    on_change=update_text
+                )
+
+        
+        st.markdown("<hr style='margin: 0.2em 0px; border-top: 1px dashed #ddd;'>", unsafe_allow_html=True)
+        
+# Render exactly like we did in PDF
+render_enhancement_step(
+    doc_id=st.session_state.video_id, 
+    doc_title=st.session_state.metadata.get('title', 'Untitled Video'),
+    manager=manager, 
+    get_payload_func=yt_get_llm_payload,  
+    default_prompt="Obsidian_Academic_Note", 
+    default_temp=0.7,                     
+    default_tokens=8000,
+    CACHE_DIR = "saved_transcripts"
+)
 
 
-    # ==========================================
-    # NEW: SPREADER MODULE INJECTION
-    # ==========================================
-    # We pass the 'enhanced_text' from session state into the spreader.
-    # It will only show up as an expander.
-    st.markdown("---") # Add a nice visual divider
-    st.header("Spreader")
-    
-    # Safely get enhanced text. If it doesn't exist yet, pass an empty string.
-    current_enhanced_text = st.session_state.get("enhanced_text", "")
-    spreader.render_spreader_module(current_enhanced_text) # <-- 2. INJECT HERE
+# ==========================================
+# NEW: SPREADER MODULE INJECTION
+# ==========================================
+# We pass the 'enhanced_text' from session state into the spreader.
+# It will only show up as an expander.
+st.markdown("---") # Add a nice visual divider
+st.header("Spreader")
 
-    # ==========================================
+# Safely get enhanced text. If it doesn't exist yet, pass an empty string.
+current_enhanced_text = st.session_state.get("enhanced_text", "")
+spreader.render_spreader_module(current_enhanced_text) # <-- 2. INJECT HERE
+
+# ==========================================
 
 
-    render_quiz_step(
-        doc_id=st.session_state.video_id,
-        manager=manager,
-        get_quiz_payload_func=get_quiz_payload,
-        CACHE_DIR = "saved_transcripts"
-    )
+render_quiz_step(
+    doc_id=st.session_state.video_id,
+    manager=manager,
+    get_quiz_payload_func=get_quiz_payload,
+    CACHE_DIR = "saved_transcripts"
+)

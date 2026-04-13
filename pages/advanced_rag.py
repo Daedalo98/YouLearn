@@ -281,7 +281,7 @@ def render_query_enhancement_step(
     st.markdown("Brain-dump your main ideas below. The LLM will expand and optimize this into a highly semantic search query.")
 
     if 'vector_db' not in st.session_state:
-        st.warning("⚠️ Please initialize or load your VectorDB in Step 1 before proceeding.")
+        st.info("⚠️ Please initialize or load your VectorDB in Step 1 before proceeding.")
         return
 
     # The Raw Input Payload

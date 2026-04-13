@@ -98,6 +98,32 @@ streamlit run main.py
 
 Navigate to `http://localhost:8501` in your browser.
 
+### Running with Docker
+
+Build and run the app with Docker using the provided `Dockerfile` and `docker-compose.yml`.
+
+1. Create or update `.env` with your API keys.
+2. Build and start the container:
+
+```bash
+docker compose up --build
+```
+
+3. Open the app:
+
+```text
+http://localhost:8501
+```
+
+### Docker Notes
+
+- The `Dockerfile` installs dependencies from `requirements.txt` and exposes Streamlit on port `8501`.
+- `docker-compose.yml` mounts the repository and persistent storage directories:
+  - `saved_pdfs`
+  - `saved_transcripts`
+  - `chroma_db`
+- Environment variables are loaded from `.env`.
+
 ## 📖 Usage Guide
 
 ### YouTube Learning Pipeline

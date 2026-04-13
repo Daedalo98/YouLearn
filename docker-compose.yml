@@ -1,0 +1,20 @@
+version: '3.9'
+
+services:
+  youlearn:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - TRANSCRIPT_API_KEY
+      - GEMINI_API_KEY
+      - ZOTERO_LIB_ID
+      - ZOTERO_API_KEY
+    env_file:
+      - .env
+    volumes:
+      - .:/app:cached
+      - ./saved_pdfs:/app/saved_pdfs
+      - ./saved_transcripts:/app/saved_transcripts
+      - ./chroma_db:/app/chroma_db
+    restart: unless-stopped
