@@ -61,7 +61,7 @@ if "is_editing_enhanced" not in st.session_state:
 
 # zoom related states
 if "global_zoom" not in st.session_state:
-    st.session_state.global_zoom = 16
+    st.session_state.global_zoom = 22 # Default font size in pixels
 
 def sync_zoom(slider_key):
     """Callback to update the global zoom whenever ANY of the local sliders are moved."""
@@ -92,31 +92,52 @@ if "regenerated_indices" not in st.session_state:
 # --- Sidebar ---
 with st.sidebar:
     st.title("⚙️ Settings")
-    input_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
     
-    if st.button("Fetch & Process Transcript", type="primary"):
+    # 1. Use a form to guarantee the pasted URL syncs before the button clicks
+    with st.form("fetch_transcript_form"):
+        input_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
+        submit_btn = st.form_submit_button("Fetch & Process Transcript", type="primary")
+    
+    if submit_btn:
         if input_url.strip():  
             video_id = functions.extract_video_id(input_url)
+            
+            # 2. DEBUG VISUAL: Prove what the system is actually extracting
+            st.toast(f"Processing ID: {video_id}", icon="🔍")
+            
+            # 3. PURGE OLD STATE: Kill the old data before fetching the new!
+            st.session_state.transcript = []
+            st.session_state.metadata = {}
+            st.session_state.video_url = ""
+            st.session_state.video_id = ""
+            st.session_state.enhanced_text = ""
+            st.session_state.quiz_state = "setup"
+            
+            # Clean up all dynamically generated text area keys
+            for key in list(st.session_state.keys()):
+                if key.startswith("text_") or key.startswith("btn_"):
+                    del st.session_state[key]
+            
+            # 4. NOW FETCH THE NEW DATA
             st.session_state.video_url = input_url
             st.session_state.video_id = video_id
             
-            with st.status("Processing Request...", expanded=True) as status:
+            with st.status(f"Processing Request for {video_id}...", expanded=True) as status:
                 full_data_dict = functions.fetch_transcript_with_logs(CACHE_DIR, input_url, video_id)
+                
                 if full_data_dict and full_data_dict.get("segments"):
                     st.session_state.transcript = full_data_dict["segments"]
                     st.session_state.metadata = full_data_dict.get("metadata", {}) 
                     st.session_state.start_time = 0.0
                     status.update(label="Transcript Ready!", state="complete", expanded=False)
                 else:
-                    status.update(label="Failed to fetch valid data.", state="error", expanded=True)
+                    # If this fails now, the screen will correctly go blank instead of showing old data.
+                    status.update(label="Failed to fetch valid data. Check API/URL.", state="error", expanded=True)
+            
+            st.rerun()
         else:
             st.warning("Please enter a valid YouTube URL first.")
-        # reload the page for the new video data to take effect
-        st.rerun()
-        # clear step 2 and 3
-        st.session_state.enhanced_text = ""
         
-
     # Sidebar Video & Controls
     if st.session_state.video_id and st.session_state.transcript:
         st.divider()
@@ -152,6 +173,7 @@ st.markdown(f"""
 
 # Display Video Info
 if "metadata" in st.session_state and st.session_state.metadata:
+    st.info(f"**Diagnostic Check:** Current Video ID in memory is `{st.session_state.video_id}`")
     meta = st.session_state.metadata
     st.markdown(f"### 📺 {meta.get('title', 'Unknown Title')}")
     st.caption(f"**Channel:** {meta.get('author_name', 'Unknown')} | **Uploaded:** {meta.get('upload_date', 'Unknown')} | **Source:** [Link]({meta.get('video_url', '')})")
@@ -182,44 +204,43 @@ with transcript_container:
         timestamp_str = functions.format_timestamp(start_sec)
         current_text = str(segment.get('text', '')) # Force as string
         
-        # Simple 2-column layout for each row
-        # adaptively adjust column widths based on content (e.g., if timestamp is long, give it more space)
-        # Calculate dynamic column widths based on text length
         text_length = len(current_text)
         btn_ratio = 0.15 if text_length < 100 else 0.12
         text_ratio = 1 - btn_ratio
         btn_col, text_col = st.columns([btn_ratio, text_ratio])
         
+        # 🚨 THE FIX: Create globally unique keys tied to THIS specific video
+        unique_btn_key = f"btn_{st.session_state.video_id}_{i}"
+        unique_txt_key = f"text_{st.session_state.video_id}_{i}"
+        
         with btn_col:
-            if st.button(f"⏱️ {timestamp_str}", key=f"btn_{i}", use_container_width=True):
+            if st.button(f"⏱️ {timestamp_str}", key=unique_btn_key, use_container_width=True):
                 st.session_state.start_time = start_sec
                 st.rerun()
         
         with text_col:
-            def update_text(index=i):
-                st.session_state.transcript[index]['text'] = st.session_state[f"text_{index}"]
+            # 🚨 THE FIX: The callback must grab the exact unique key
+            def update_text(index=i, key_name=unique_txt_key):
+                # Update the main memory with the new text
+                st.session_state.transcript[index]['text'] = st.session_state[key_name]
                 functions.save_edits_to_disk(CACHE_DIR)
                 st.toast("💾 Auto-saved!", icon="✅")
 
-            # If the toggle is ON, render the beautiful formatted text
             if is_preview_mode:
-                # Use a markdown block to render sizes, bold, italic, etc.
                 st.markdown(current_text, unsafe_allow_html=True)
-            
-            # If the toggle is OFF, show the raw editor
             else:
                 st.text_area(
                     "Edit Text", 
                     value=current_text, 
-                    key=f"text_{i}", 
+                    key=unique_txt_key,  # Applies the unique key here!
                     label_visibility="collapsed",
                     height=100,
                     on_change=update_text
                 )
-
         
         st.markdown("<hr style='margin: 0.2em 0px; border-top: 1px dashed #ddd;'>", unsafe_allow_html=True)
-        
+
+
 # Render exactly like we did in PDF
 render_enhancement_step(
     doc_id=st.session_state.video_id, 

@@ -5,6 +5,8 @@ import json
 import threading
 import time
 import functions
+import random
+
 
 # Define constants
 PROMPTS_FILE = "system_prompts.json"
@@ -28,7 +30,7 @@ def init_shared_state():
     if "regenerated_indices" not in st.session_state:
         st.session_state.regenerated_indices = set()
     if "global_zoom" not in st.session_state:
-        st.session_state.global_zoom = 16
+        st.session_state.global_zoom = 22
 
 def sync_zoom(slider_key):
     st.session_state.global_zoom = st.session_state[slider_key]
@@ -138,9 +140,11 @@ def render_enhancement_step(
                         st.session_state.enhanced_text = manager.generate_sync(llm_payload, system_prompt, text_model, temperature, max_tokens)
                         status.update(label="Complete!", state="complete", expanded=False)
 
-                # Save the new text to disk
+                # Save the new text to disk or overwrite existing file
                 with open(cached_path, "w", encoding="utf-8") as f:
                     f.write(st.session_state.enhanced_text)
+                st.toast("Generation complete and saved!", icon="✅")
+                st.rerun() # Refresh UI to show the new text
 
             # UI Rendering based on file existence
             if file_exists:
@@ -195,13 +199,51 @@ def get_quiz_payload():
 def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str):
     """
     Renders Step 3: Metacognitive Exam.
-    Takes `get_quiz_payload_func()` to grab text dynamically.
-    (NOTE: Your exact Q-model / A-model logic goes here. I am keeping it identical.)
     """
     init_shared_state()
     st.divider()
     st.header("🧠 Step 3: Metacognitive Exam")
     
+    # --- NEW: Robust A-Model fetcher with Retry Logic (Goal 2) ---
+    def resilient_a_model_fetch(status_dict, payload, q_list, sys_prompt, model, temp, tok, num_opts, mgr):
+        status_dict["running"] = True
+        status_dict["done"] = False
+        status_dict["error"] = None
+        max_retries = 3
+        
+        dynamic_prompt = (
+            f"{sys_prompt}\n\n"
+            f"Build a multiple-choice quiz for EXACTLY these {len(q_list)} questions:\n"
+            f"{json.dumps(q_list)}\n"
+            f"Each MUST have exactly {num_opts} options. Return a JSON array of objects containing keys: 'question', 'options', 'answer', 'explanation'."
+        )
+        status_dict["last_payload"] = f"--- A-MODEL SYSTEM PROMPT ---\n{dynamic_prompt}\n\n--- PAYLOAD ---\n{payload}"
+        
+        for attempt in range(max_retries):
+            try:
+                output = mgr.generate_sync(payload, dynamic_prompt, model, temp, tok)
+                start_p = output.find('[')
+                end_p = output.rfind(']')
+                
+                if start_p != -1 and end_p != -1:
+                    data = json.loads(output[start_p:end_p+1])
+                    data = [{str(k).lower().strip(): v for k, v in q.items()} for q in data]
+                    
+                    # Validation Check
+                    if isinstance(data, list) and len(data) > 0 and "options" in data[0]:
+                        status_dict["result"] = data
+                        status_dict["running"] = False
+                        status_dict["done"] = True
+                        return
+                
+                raise ValueError("Output was missing expected JSON array or 'options' key.")
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    status_dict["error"] = f"Failed after {max_retries} attempts. Last error: {str(e)}"
+                    
+        status_dict["running"] = False
+        status_dict["done"] = True
+
     with st.container(border=True):
         col_q_prompt, col_q_output = st.columns([1, 2])
         
@@ -217,6 +259,13 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                 mult_idk = st.number_input("Ignorance Multiplier", 0.0, 5.0, 1.0, 0.1)
             
             st.divider()
+            
+            # --- NEW: Master Payload Editor (Goal 4) ---
+            st.subheader("Payload Settings")
+            default_payload = functions.prepare_quiz_payload()
+            user_payload = st.text_area("Edit Raw Document Payload", value=default_payload, height=150, key="doc_payload_area", help="This is the exact source text sent to both models.")
+            
+            st.divider()
             st.subheader("LLM Architecture Settings")
             
             available_models = manager.get_models()
@@ -226,63 +275,66 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
             questions_prompt_idx = list(prompts_dict.keys()).index("Questions_Generator") if "Questions_Generator" in prompts_dict else 0
             answers_prompt_idx = list(prompts_dict.keys()).index("Answers_Generator") if "Answers_Generator" in prompts_dict else 0
                         
-            # TABS FOR INDEPENDENT MODEL CONTROL
             tab_q, tab_a = st.tabs(["🗣️ Q-Model (Ideation)", "📝 A-Model (Answers)"])
             
             with tab_q:
                 q_model = st.selectbox("Q-Model Selection", default_models, index=text_idx, key="q_mod")
-                q_temp = st.number_input("Temperature", 0.0, 2.0, 0.5, 0.1, key="q_temp", help="Higher = more creative questions.")
+                q_temp = st.number_input("Temperature", 0.0, 2.0, 0.5, 0.1, key="q_temp")
                 q_tok = st.number_input("Max Tokens", 100, 5000, 1000, 100, key="q_tok")
                 q_stream = st.toggle("Stream Output", value=True, key="q_stream")
-                
                 q_prompt_name = st.selectbox("System Prompt", list(prompts_dict.keys()), index=questions_prompt_idx, key="q_prompt_sel")
                 q_sys_prompt = st.text_area("Edit Q-Model Prompt", prompts_dict[q_prompt_name], height=150, key="q_prompt_area")
             
             with tab_a:
                 a_model = st.selectbox("A-Model Selection", default_models, index=text_idx, key="a_mod")
-                a_temp = st.number_input("Temperature", 0.0, 2.0, 0.2, 0.1, key="a_temp", help="Lower = stricter JSON adherence.")
+                a_temp = st.number_input("Temperature", 0.0, 2.0, 0.2, 0.1, key="a_temp")
                 a_tok = st.number_input("Max Tokens", 100, 5000, 2000, 100, key="a_tok")
-                # A-Model runs in background, so streaming is forced off for UI stability
                 st.caption("*A-Model runs synchronously in the background.*")
-                
                 a_prompt_name = st.selectbox("System Prompt", list(prompts_dict.keys()), index=answers_prompt_idx, key="a_prompt_sel")
                 a_sys_prompt = st.text_area("Edit A-Model Prompt", prompts_dict[a_prompt_name], height=150, key="a_prompt_area")
             
             st.divider()
+            
+            # --- NEW: Split Reset Buttons (Goal 1) ---
             if st.session_state.quiz_state != "setup":
-                if st.button("🔄 Reset Exam Engine", use_container_width=True):
-                    st.session_state.quiz_state = "setup"
-                    st.session_state.q_list = []
-                    st.session_state.evaluations = {}
-                    st.session_state.a_model_data = []
-                    st.session_state.bg_thread_status = {"running": False, "done": False, "result": None, "error": None}
-                    st.session_state.quiz_score = 0.0
-                    st.session_state.q_payload_log = ""
-                    st.rerun()
-
+                col_r1, col_r2 = st.columns(2)
+                with col_r1:
+                    if st.button("🔄 Reset Questions", use_container_width=True, help="Wipes everything and starts over."):
+                        st.session_state.quiz_state = "setup"
+                        st.session_state.q_list = []
+                        st.session_state.evaluations = {}
+                        st.session_state.a_model_data = []
+                        st.session_state.bg_thread_status = {"running": False, "done": False, "result": None, "error": None}
+                        st.session_state.quiz_score = 0.0
+                        st.session_state.q_payload_log = ""
+                        st.rerun()
+                with col_r2:
+                    if st.button("🔄 Reset Answers", use_container_width=True, help="Clears your selections to retake the test."):
+                        if st.session_state.quiz_state in ["taking_quiz", "reviewing"]:
+                            # Purge the user's choices but keep the A-Model generated data
+                            for item in st.session_state.a_model_data:
+                                if 'user_choice' in item:
+                                    del item['user_choice']
+                            st.session_state.quiz_state = "taking_quiz"
+                            st.rerun()
 
         # --- RIGHT COLUMN: WORKFLOW ---
         with col_q_output:
             st.subheader("Interactive Exam")
-            
-            # Global Zoom Slider for Quiz
             st.slider("🔍 Zoom Text Size", min_value=10, max_value=50, value=st.session_state.global_zoom, key="zoom_step3", on_change=sync_zoom, args=("zoom_step3",), label_visibility="collapsed")
             
             if not st.session_state.get("enhanced_text", "").strip():
                 st.caption("*Generate your Enhanced Output in Step 2 to unlock the exam engine.*")
             else:
                 
-                # 1. SETUP STATE
                 if st.session_state.quiz_state == "setup":
                     st.info(f"Engine Ready: {quiz_n} Questions.")
                     if st.button("🚀 Generate Exam Concepts (Q-Model)", type="primary", use_container_width=True):
                         st.session_state.quiz_state = "q_gen"
                         st.rerun()
 
-                # 2. Q-GEN STATE (With Active Stream Interceptor)
+                # --- NEW: Q-Model Retry Logic (Goal 2) ---
                 elif st.session_state.quiz_state == "q_gen":
-                    llm_payload = functions.prepare_quiz_payload()
-                    
                     q_dynamic_prompt = (
                         f"{q_sys_prompt}\n\n"
                         f"CRITICAL INSTRUCTION: Generate EXACTLY {quiz_n} different questions based on this text.\n"
@@ -290,54 +342,59 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                         f"Format strictly like this: [\"Question 1?\", \"Question 2?\"]\n"
                     )
                     
-                    st.session_state.q_payload_log = f"--- Q-MODEL SYSTEM PROMPT ---\n{q_dynamic_prompt}\n\n--- DOCUMENT PAYLOAD ---\n{llm_payload}"
+                    st.session_state.q_payload_log = f"--- Q-MODEL SYSTEM PROMPT ---\n{q_dynamic_prompt}\n\n--- DOCUMENT PAYLOAD ---\n{user_payload}"
+                    
+                    max_q_retries = 3
+                    q_success = False
                     
                     with st.status(f"Q-Model brainstorming {quiz_n} questions...", expanded=True) as status:
-                        q_output = ""
-                        matches = []
-                        
-                        if q_stream:
-                            stream_ph = st.empty()
-                            for chunk in manager.generate_stream(llm_payload, q_dynamic_prompt, q_model, q_temp, q_tok):
-                                q_output += chunk
-                                stream_ph.markdown(f"```json\n{q_output}▌\n```")
+                        for attempt in range(max_q_retries):
+                            if attempt > 0:
+                                st.warning(f"Validation failed. Retrying... (Attempt {attempt+1}/{max_q_retries})")
                                 
-                                # THE STREAM INTERCEPTOR
-                                # Continuously check how many valid strings we have in the raw output
+                            q_output = ""
+                            matches = []
+                            
+                            if q_stream:
+                                stream_ph = st.empty()
+                                for chunk in manager.generate_stream(user_payload, q_dynamic_prompt, q_model, q_temp, q_tok):
+                                    q_output += chunk
+                                    stream_ph.markdown(f"```json\n{q_output}▌\n```")
+                                    matches = re.findall(r'"(.*?)"', q_output)
+                                    if len(matches) >= quiz_n:
+                                        st.toast("Target reached! Intercepting stream early.", icon="⚡")
+                                        break 
+                                stream_ph.empty()
+                            else:
+                                q_output = manager.generate_sync(user_payload, q_dynamic_prompt, q_model, q_temp, q_tok)
                                 matches = re.findall(r'"(.*?)"', q_output)
-                                if len(matches) >= quiz_n:
-                                    st.toast("Target reached! Intercepting stream early.", icon="⚡")
-                                    break # Kills the LLM generation instantly!
-                                    
-                            stream_ph.empty()
-                        else:
-                            q_output = manager.generate_sync(llm_payload, q_dynamic_prompt, q_model, q_temp, q_tok)
-                            matches = re.findall(r'"(.*?)"', q_output)
+                            
+                            if len(matches) >= quiz_n:
+                                q_success = True
+                                break # Exit the retry loop
                         
-                        # Proceed with exactly N matches
-                        if len(matches) >= quiz_n:
+                        if q_success:
                             st.session_state.q_list = matches[:quiz_n] 
-                            st.session_state.regenerated_indices = set() # Reset tracker
+                            st.session_state.regenerated_indices = set()
                             status.update(label="Questions Generated!", state="complete", expanded=False)
                             st.session_state.quiz_state = "evaluating"
                             st.rerun()
                         else:
                             status.update(label="Failed to generate enough questions.", state="error", expanded=True)
                             st.error(f"Raw Output: {q_output}")
-                            if st.button("Retry"): st.rerun()
+                            if st.button("Manual Retry"): st.rerun()
 
-                # 3. EVALUATING STATE (With Live Regeneration)
                 elif st.session_state.quiz_state == "evaluating":
                     with st.expander("🔍 View Q-Model Payload"):
                         st.text(st.session_state.get("q_payload_log", ""))
                         
-                    # Kick off background A-Model using the ORIGINAL list
                     if not st.session_state.bg_thread_status["running"] and not st.session_state.bg_thread_status["done"]:
+                        # --- NEW: Using resilient A-model background function ---
                         threading.Thread(
-                            target=functions.bg_fetch_answers, 
+                            target=resilient_a_model_fetch, 
                             args=(
                                 st.session_state.bg_thread_status,
-                                functions.prepare_quiz_payload(),
+                                user_payload,
                                 st.session_state.q_list,
                                 a_sys_prompt,
                                 a_model,
@@ -355,7 +412,6 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                     elif st.session_state.bg_thread_status["done"]:
                         st.caption("✅ *A-Model background task complete!*")
 
-                    # Live UI (Not inside a form, so buttons work independently!)
                     for i, q_text in enumerate(st.session_state.q_list):
                         col_q, col_btn = st.columns([8, 1])
                         with col_q:
@@ -374,26 +430,27 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                         st.session_state.quiz_state = "a_wait"
                         st.rerun()
 
-                # 4. A-WAIT STATE (With A-Model Patching)
                 elif st.session_state.quiz_state == "a_wait":
                     if st.session_state.bg_thread_status["done"]:
                         if st.session_state.bg_thread_status["error"]:
                             st.error(f"A-Model Error: {st.session_state.bg_thread_status['error']}")
+                            if st.button("Retry A-Model Generation"):
+                                st.session_state.bg_thread_status = {"running": False, "done": False, "result": None, "error": None}
+                                st.session_state.quiz_state = "evaluating"
+                                st.rerun()
                         else:
                             raw_a_data = st.session_state.bg_thread_status["result"]
                             
-                            # THE PATCH JOB: If you swapped questions, we need to fix their answers!
                             if st.session_state.regenerated_indices:
                                 with st.spinner(f"Patching answers for {len(st.session_state.regenerated_indices)} swapped questions..."):
                                     questions_to_patch = [st.session_state.q_list[i] for i in st.session_state.regenerated_indices]
-                                    llm_payload = functions.prepare_quiz_payload()
                                     patch_prompt = (
                                         f"{a_sys_prompt}\n\n"
                                         f"Build a multiple-choice quiz for EXACTLY these {len(questions_to_patch)} questions:\n"
                                         f"{json.dumps(questions_to_patch)}\n"
                                         f"Each MUST have exactly {num_options} options. Return a JSON array."
                                     )
-                                    patch_out = manager.generate_sync(llm_payload, patch_prompt, a_model, a_temp, a_tok)
+                                    patch_out = manager.generate_sync(user_payload, patch_prompt, a_model, a_temp, a_tok)
                                     
                                     start_p = patch_out.find('[')
                                     end_p = patch_out.rfind(']')
@@ -401,7 +458,6 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                                         patch_data = json.loads(patch_out[start_p:end_p+1])
                                         patch_data = [{str(k).lower().strip(): v for k, v in q.items()} for q in patch_data]
                                         
-                                        # Inject the patched answers back into the raw data in the correct spots
                                         patch_idx = 0
                                         for orig_idx in sorted(list(st.session_state.regenerated_indices)):
                                             raw_a_data[orig_idx] = patch_data[patch_idx]
@@ -411,6 +467,12 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                             for i, item in enumerate(raw_a_data):
                                 item["eval_conf"] = st.session_state.evaluations[i]["confidence"]
                                 item["eval_like"] = st.session_state.evaluations[i]["liking"]
+                                
+                                # --- NEW: Shuffle options strictly ONCE per model payload creation (Goal 3) ---
+                                opts = item.get("options", [])
+                                random.shuffle(opts)
+                                item["options"] = opts 
+                                
                                 st.session_state.a_model_data.append(item)
                                 
                             st.session_state.quiz_state = "taking_quiz"
@@ -420,7 +482,6 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                             time.sleep(1)
                             st.rerun()
 
-                # 5. TAKING EXAM STATE (All questions visible)
                 elif st.session_state.quiz_state == "taking_quiz":
                     with st.expander("🔍 View A-Model Payload"):
                         st.text(st.session_state.bg_thread_status.get("last_payload", ""))
@@ -432,24 +493,23 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                             st.markdown(f"### Q{idx+1}: {q_data.get('question')}")
                             st.caption(f"*Your Confidence: {q_data['eval_conf']}*")
                             
+                            # --- NEW: Appending default option, defaulting index to 'I don't know' (Goal 3) ---
                             opts = q_data.get('options', []) + ["I don't know"]
-                            st.radio("Options", opts, key=f"user_ans_{idx}", label_visibility="collapsed")
+                            default_index = len(opts) - 1 
+                            st.radio("Options", opts, index=default_index, key=f"user_ans_{idx}", label_visibility="collapsed")
                             st.markdown("<hr style='margin: 1em 0px; border-top: 1px dashed #bbb;'>", unsafe_allow_html=True)
                             
                         if st.form_submit_button("Submit Final Answers", type="primary", use_container_width=True):
-                            # Save all answers from the form directly into memory
                             for idx in range(len(st.session_state.a_model_data)):
                                 st.session_state.a_model_data[idx]['user_choice'] = st.session_state[f"user_ans_{idx}"]
                             st.session_state.quiz_state = "reviewing"
                             st.rerun()
 
-                # 6. REVIEWING STATE (Results & Scoring)
                 elif st.session_state.quiz_state == "reviewing":
                     st.success("### Exam Complete!")
                     
                     total_score = 0.0
                     
-                    # Display all questions and results
                     for idx, q_data in enumerate(st.session_state.a_model_data):
                         st.markdown(f"### Q{idx+1}: {q_data.get('question')}")
                         
@@ -473,7 +533,6 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                         total_score += points
                         st.info(f"**Explanation:** {q_data.get('explanation', '')}")
                         
-                        # Flag Checkbox for each question
                         q_data['flagged'] = st.checkbox("🚩 Flag as Incorrect/Inappropriate", key=f"flag_{idx}")
                         st.markdown("<hr style='margin: 1em 0px; border-top: 1px solid #ddd;'>", unsafe_allow_html=True)
                         
@@ -490,10 +549,8 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                             
                         st.session_state.enhanced_text += append_text
                         st.success(f"Successfully appended {saved_count} questions to your Markdown note in Step 2!")
-                        # save the new file
                         output_path = os.path.join(CACHE_DIR, f"{st.session_state.video_id}_enhanced.md")
                         with open(output_path, "w", encoding="utf-8") as f:
                             f.write(st.session_state.enhanced_text)
                         st.rerun()
-                        # once appended, disabilitate button
                         st.session_state.quiz_state = "finalized"

@@ -264,7 +264,7 @@ def init_enhancer_state():
     if "is_editing_enhanced" not in st.session_state:
         st.session_state.is_editing_enhanced = False
     if "global_zoom" not in st.session_state:
-        st.session_state.global_zoom = 16 # Default font size
+        st.session_state.global_zoom = 22 # Default font size
 
 def sync_zoom(key):
     st.session_state.global_zoom = st.session_state[key]
@@ -570,7 +570,7 @@ else:
                             r"<mark style='background-color: rgba(255, 235, 59, 0.5); color: inherit; padding: 2px; border-radius: 3px;'>\1</mark>", 
                             highlighted_text
                         )
-                    st.markdown(f"<div style='font-size: {st.session_state.get('global_zoom', 16)}px; height: 400px; overflow-y: auto; padding: 10px; border: 1px solid #ccc;'>{highlighted_text}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size: {st.session_state.get('global_zoom', 22)}px; height: 400px; overflow-y: auto; padding: 10px; border: 1px solid #ccc;'>{highlighted_text}</div>", unsafe_allow_html=True)
                 except Exception as e:
                     st.error(f"Could not load or highlight original file: {e}")
 
@@ -724,7 +724,7 @@ else:
                         try:
                             for chunk in ai_manager.generate_stream(final_llm_payload, system_prompt_synth, synth_model, synth_temp, synth_tokens):
                                 raw_generated_text += chunk
-                                text_placeholder.markdown(f"<div style='font-size: {st.session_state.get('global_zoom', 16)}px;'>{raw_generated_text}▌</div>", unsafe_allow_html=True) 
+                                text_placeholder.markdown(f"<div style='font-size: {st.session_state.get('global_zoom', 22)}px;'>{raw_generated_text}▌</div>", unsafe_allow_html=True) 
                             status.update(label="Generation Complete!", state="complete", expanded=False)
                         except Exception as e:
                             st.error(f"Generation error: {e}")
@@ -750,7 +750,7 @@ else:
         # --- FINAL OUTPUT RENDERING ---
         with col_gen_output:
             st.subheader("Final Academic Document")
-            st.slider("🔍 Zoom Text Size", min_value=10, max_value=50, value=st.session_state.get('global_zoom', 16), key="zoom_step4", on_change=sync_zoom, args=("zoom_step4",))
+            st.slider("🔍 Zoom Text Size", min_value=10, max_value=50, value=st.session_state.get('global_zoom', 22), key="zoom_step4", on_change=sync_zoom, args=("zoom_step4",))
             
             if st.session_state.get('generated_synthesis'):
                 mode_edit = st.toggle("✏️ Edit Final Document", value=st.session_state.get('is_editing_synth', False), key="toggle_edit_synth")
@@ -764,7 +764,7 @@ else:
                         st.session_state.is_editing_synth = False
                         st.rerun()
                 else:
-                    st.markdown(f"<div style='font-size: {st.session_state.get('global_zoom', 16)}px;'>{st.session_state.generated_synthesis}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size: {st.session_state.get('global_zoom', 22)}px;'>{st.session_state.generated_synthesis}</div>", unsafe_allow_html=True)
                     
                 # Download Button
                 st.download_button(

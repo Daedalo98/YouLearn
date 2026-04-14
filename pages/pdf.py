@@ -324,12 +324,12 @@ if st.session_state.doc_id:
         # SYNCED ZOOM CONTROLS
         def sync_zoom(key):
             st.session_state.global_zoom = st.session_state[key]
-        st.slider("🔍 Zoom Text Size", min_value=10, max_value=50, value=st.session_state.get("global_zoom", 16), key="zoom_pdf_step1", on_change=sync_zoom, args=("zoom_pdf_step1",), label_visibility="collapsed")
+        st.slider("🔍 Zoom Text Size", min_value=10, max_value=50, value=st.session_state.get("global_zoom", 22), key="zoom_pdf_step1", on_change=sync_zoom, args=("zoom_pdf_step1",), label_visibility="collapsed")
         
         st.markdown(f"""
             <style>
-                .stTextArea textarea {{ font-size: {st.session_state.get('global_zoom', 16)}px !important; line-height: 1.5 !important; }}
-                .stMarkdown p, .stMarkdown li {{ font-size: {st.session_state.get('global_zoom', 16)}px !important; line-height: 1.5 !important; }}
+                .stTextArea textarea {{ font-size: {st.session_state.get('global_zoom', 22)}px !important; line-height: 1.5 !important; }}
+                .stMarkdown p, .stMarkdown li {{ font-size: {st.session_state.get('global_zoom', 22)}px !important; line-height: 1.5 !important; }}
             </style>
         """, unsafe_allow_html=True)
 
