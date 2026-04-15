@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import re
 import json
 
@@ -62,8 +61,8 @@ def render_spreader_module(enhanced_text):
         words_json = json.dumps(words_data)
 
         # We initialize default values directly into the HTML
-        default_wpm = 400
-        default_font = 52
+        default_wpm = st.slider("Set Default Speed (WPM)", min_value=100, max_value=1000, value=500, step=5)
+        default_font = st.slider("Set Default Font Size (px)", min_value=20, max_value=120, value=48, step=2)
 
         # Updated HTML/JS Payload - No Python string injections for the UI state
         html_code = f"""
@@ -322,7 +321,5 @@ def render_spreader_module(enhanced_text):
         </body>
         </html>
         """
-
-        #components.html(html_code, height=380)
-
+        
         st.iframe(html_code, height=380)

@@ -17,3 +17,4 @@ langchain-ollama
 langchain-chroma
 chromadb 
 tiktoken
+trafilatura

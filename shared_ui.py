@@ -250,8 +250,8 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
         # --- LEFT COLUMN: SETTINGS ---
         with col_q_prompt:
             st.subheader("Quiz Parameters")
-            quiz_n = st.number_input("Total Questions (N)", 1, 50, 5)
-            num_options = st.number_input("Options per Question", 2, 6, 4)
+            quiz_n = st.number_input("Total Questions (N)", 1, 100, 10)
+            num_options = st.number_input("Options per Question", 2, 10, 5)
 
             with st.expander("⚖️ Scoring Multipliers"):
                 mult_sure = st.number_input("Certainty Multiplier", 0.0, 5.0, 1.0, 0.1)
@@ -260,10 +260,23 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
             
             st.divider()
             
-            # --- NEW: Master Payload Editor (Goal 4) ---
+            # --- Payload Settings ---
             st.subheader("Payload Settings")
-            default_payload = functions.prepare_quiz_payload()
-            user_payload = st.text_area("Edit Raw Document Payload", value=default_payload, height=150, key="doc_payload_area", help="This is the exact source text sent to both models.")
+            
+            # Use the injected function from your main.py pipeline
+            default_payload = get_quiz_payload_func() 
+            
+            # Check session state so Streamlit doesn't reset your manual edits
+            if "doc_payload_area" not in st.session_state:
+                st.session_state.doc_payload_area = default_payload
+                
+            user_payload = st.text_area(
+                "Edit Raw Document Payload", 
+                value=st.session_state.doc_payload_area, 
+                height=150, 
+                key="doc_payload_area", 
+                help="This is the exact source text sent to both models."
+            )
             
             st.divider()
             st.subheader("LLM Architecture Settings")

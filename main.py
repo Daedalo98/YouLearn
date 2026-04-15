@@ -6,10 +6,11 @@ st.set_page_config(layout="wide", page_title="Educational Pipeline", page_icon="
 # 2. Define our Multi-Page App structure
 yt_page = st.Page("pages/youtube.py", title="YouTube Pipeline", icon="🎥")
 pdf_page = st.Page("pages/pdf.py", title="PDF Pipeline", icon="📄")
+websites_page = st.Page("pages/websites.py", title="Web Scraping Pipeline", icon="🌐")
 rag_page = st.Page("pages/advanced_rag.py", title="Advanced RAG Configurator", icon="🧠")
 
 # 3. Setup Modern Navigation
-pg = st.navigation([yt_page, pdf_page, rag_page])
+pg = st.navigation([yt_page, pdf_page, websites_page, rag_page])
 
 # 4. State Safety: Context Switching
 # We track which page the user is currently on.

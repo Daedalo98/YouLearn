@@ -5,6 +5,13 @@ import requests
 import streamlit as st
 import AI_manager as manager
 
+import os
+import hashlib
+import trafilatura
+from urllib.parse import urlparse
+
+## --- YOUTUBE UTILS ---
+
 def extract_video_id(url: str) -> str:
     """Extracts the YouTube Video ID from any standard, shortened, live, or shorts URL."""
     # Strip any accidental spaces the user might have copied
@@ -129,16 +136,46 @@ def format_transcript_for_copy(transcript_data: list) -> str:
     """Compiles the edited transcript segments into a single, clean text block."""
     return "\n\n".join([segment.get('text', '') for segment in transcript_data])
 
-def format_timestamp(seconds) -> str:
-    """Helper function to format seconds into MM:SS format."""
-    try:
-        sec_float = float(seconds)
-        mins = int(sec_float // 60)
-        secs = int(sec_float % 60)
-        return f"{mins:02d}:{secs:02d}"
-    except (ValueError, TypeError):
-        return "00:00"
+def get_cached_videos(cache_dir: str) -> dict:
+    """
+    Scans the cache directory for saved video JSON files.
+    Returns a dictionary mapping 'video_id' to its 'title'.
+    This is used to populate the dropdown menu in the UI.
+    """
+    cached_videos = {}
     
+    if not os.path.exists(cache_dir):
+        return cached_videos
+        
+    for filename in os.listdir(cache_dir):
+        if filename.endswith(".json"):
+            filepath = os.path.join(cache_dir, filename)
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    
+                # Extract the video ID from the filename (remove .json)
+                video_id = filename.replace(".json", "")
+                
+                # Try to get the title from metadata, default to the ID if not found
+                title = data.get("metadata", {}).get("title", f"Unknown Title ({video_id})")
+                
+                cached_videos[video_id] = title
+            except Exception as e:
+                print(f"Error reading {filename}: {e}")
+                
+    return cached_videos
+
+def load_cached_video(cache_dir: str, video_id: str) -> dict:
+    """
+    Reads a specific video's JSON file from disk and returns the dictionary.
+    """
+    filepath = os.path.join(cache_dir, f"{video_id}.json")
+    if os.path.exists(filepath):
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
 def save_edits_to_disk(CACHE_DIR: str):
     """Saves the current session state transcript back to the local JSON file."""
     if not st.session_state.get("video_id"):
@@ -157,6 +194,74 @@ def save_edits_to_disk(CACHE_DIR: str):
             json.dump(full_data, f, ensure_ascii=False, indent=4)
     except Exception as e:
         st.error(f"⚠️ Failed to save changes: {e}")
+        
+
+
+## --- WEBSITE UTILS ---
+
+def get_url_hash(url: str) -> str:
+    """
+    Converts a URL into a safe, unique string using SHA-256.
+    This prevents file path errors caused by special characters in URLs.
+    """
+    return hashlib.sha256(url.encode('utf-8')).hexdigest()
+
+def scrape_website_to_markdown(BASE_WEB_DIR: str, url: str) -> dict:
+    """
+    Downloads a webpage and extracts its core content into Markdown.
+    Includes caching to prevent redundant network calls.
+    """
+    # 1. Validate the URL format basically
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return {"error": "Invalid URL provided. Please include http:// or https://", "markdown": None, "folder": None}
+
+    # 2. Setup caching paths
+    url_hash = get_url_hash(url)
+    doc_folder = os.path.join(os.getcwd(), BASE_WEB_DIR, url_hash)
+    md_path = os.path.join(doc_folder, f"{url_hash}.md")
+    
+    # 3. Check Cache
+    if os.path.exists(md_path):
+        # If we already scraped this, just read it from the local disk
+        with open(md_path, "r", encoding="utf-8") as f:
+            cached_md = f.read()
+        return {"error": None, "markdown": cached_md, "folder": doc_folder}
+
+    # 4. Fetch and Extract (Network Call)
+    # trafilatura.fetch_url handles basic timeouts and network errors
+    downloaded = trafilatura.fetch_url(url)
+    
+    if downloaded is None:
+         return {"error": "Failed to fetch the webpage. It might be blocking scrapers (403 Forbidden) or timing out.", "markdown": None, "folder": None}
+
+    # Extract the content and output directly as Markdown!
+    # This ignores navbars, footers, and ads automatically.
+    markdown_content = trafilatura.extract(downloaded, output_format="markdown")
+    
+    if not markdown_content:
+        return {"error": "Successfully fetched the page, but could not extract readable article content.", "markdown": None, "folder": None}
+
+    # 5. Save to Cache
+    os.makedirs(doc_folder, exist_ok=True)
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(markdown_content)
+
+    return {"error": None, "markdown": markdown_content, "folder": doc_folder}
+
+
+    
+## --- SHARED UTILS ---
+
+def format_timestamp(seconds) -> str:
+    """Helper function to format seconds into MM:SS format."""
+    try:
+        sec_float = float(seconds)
+        mins = int(sec_float // 60)
+        secs = int(sec_float % 60)
+        return f"{mins:02d}:{secs:02d}"
+    except (ValueError, TypeError):
+        return "00:00"
 
 def load_prompts(filepath: str) -> dict:
     """Loads system prompts. Creates default Obsidian and Quiz prompts if missing."""
@@ -182,34 +287,91 @@ def save_prompt(filepath: str, name: str, prompt_text: str):
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(prompts, f, indent=4)
 
-def prepare_llm_payload(enhanced: bool) -> str:
-    """Combines metadata and edited transcript into a single string for the LLM."""
-    meta = st.session_state.metadata
-    
-    # Extract just the text from the segment dictionaries
-    text_only = "\n".join([seg.get("text", "") for seg in st.session_state.transcript])
-    
-    payload = (
-        f"--- METADATA ---\n"
-        f"Title: {meta.get('title', 'Unknown')}\n"
-        f"Author: {meta.get('author_name', 'Unknown')}\n"
-        f"Date: {meta.get('upload_date', 'Unknown')}\n"
-        f"URL: {meta.get('video_url', 'Unknown')}\n\n"
-        f"--- REDACTED TRANSCRIPT ---\n"
-        f"{text_only}"
-    )
-    if enhanced:
-        payload = (f"--- METADATA ---\n"
-                   f"Title: {meta.get('title', 'Unknown')}\n"
-                   f"Author: {meta.get('author_name', 'Unknown')}\n"
-                   f"Date: {meta.get('upload_date', 'Unknown')}\n"
-                   f"URL: {meta.get('video_url', 'Unknown')}\n\n"
-                   f"--- REDACTED TRANSCRIPT ---\n"
-                   f"{text_only}"
-                   f"--- ENHANCED NOTES ---\n"
-                   f"{st.session_state.get('enhanced_text', '')}")
+
+
+
+
+def llm_settings(manager: manager.Manager, default_model: str, default_temp: float, default_max_tokens: int, PROMPTS_FILE: str, default_prompt: str):
+    """Renders the LLM settings UI and updates session state on change."""
+    st.subheader("⚙️ LLM Settings")
+
+    available_models = manager.get_models()
+    default_models = ["No models found"] if not available_models else available_models
+    model = st.selectbox("Model", options=default_models, index=manager.get_models().index(default_model))
         
-    return payload
+    temperature = st.number_input("Temperature", 0.0, 10.0, default_temp, 0.1)
+    max_tokens = st.number_input("Max Tokens (Verbosity)", 100, 100000, default_max_tokens, 100)
+    streaming_on = st.toggle("Streaming Generation", value=True)
+
+    st.subheader("System Prompts")
+    prompts_dict = load_prompts(PROMPTS_FILE)
+    prompt_names = list(prompts_dict.keys())
+    
+    # Determine default index
+    default_idx = prompt_names.index(default_prompt) if default_prompt in prompt_names else 0
+    
+    # 1. INITIALIZE STATE FIRST
+    # We must set this before the widgets render so the default prompt is ready.
+    if "text_prompt_area" not in st.session_state:
+        st.session_state.text_prompt_area = prompts_dict.get(prompt_names[default_idx], "")
+
+    # 2. DEFINE THE CALLBACK
+    def sync_prompt_to_area():
+        """Forces the text area state to match the newly selected dropdown item."""
+        selected = st.session_state.text_prompt_sel
+        st.session_state.text_prompt_area = prompts_dict.get(selected, "")
+
+    # 3. RENDER SELECTBOX AND CAPTURE THE NAME
+    selected_prompt_name = st.selectbox(
+        "Active Prompt", 
+        prompt_names, 
+        index=default_idx, 
+        key="text_prompt_sel",
+        on_change=sync_prompt_to_area
+    )
+    
+    # 4. RENDER TEXT AREA (No 'value' parameter needed, the key handles it)
+    system_prompt = st.text_area("Edit Current Prompt", height=200, key="text_prompt_area")
+    
+    # 5. USE THE SELECTED NAME FOR SAVING (Restoring your original feature)
+    with st.expander("Save / Modify Prompt"):
+        # Here is where selected_prompt_name is actually used!
+        new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_prompt_name)
+        
+        if st.button("Save Prompt", use_container_width=True):
+            if new_prompt_name and system_prompt:
+                save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt)
+                st.success("Saved!")
+                st.rerun()
+
+    return model, temperature, max_tokens, streaming_on, system_prompt
+
+# Helper function to avoid duplicating the generation code
+def run_generation(manager, llm_payload, system_prompt, model, temperature, max_tokens, cached_path, streaming_on):
+
+    st.session_state.enhanced_text = ""
+    text_placeholder = st.empty()
+    
+    if streaming_on:
+        full_text = ""
+        with st.status(f"Generative pass using {model}...", expanded=True) as status:
+            for chunk in manager.generate_stream(llm_payload, system_prompt, model, temperature, max_tokens):
+                full_text += chunk
+                text_placeholder.markdown(full_text + "▌") 
+            status.update(label="Complete!", state="complete", expanded=False)
+        text_placeholder.empty() 
+        st.session_state.enhanced_text = full_text
+    else:
+        with st.status(f"Generating Output...", expanded=True) as status:
+            st.session_state.enhanced_text = manager.generate_sync(llm_payload, system_prompt, model, temperature, max_tokens)
+            status.update(label="Complete!", state="complete", expanded=False)
+
+    # Save the new text to disk or overwrite existing file
+    with open(cached_path, "w", encoding="utf-8") as f:
+        f.write(st.session_state.enhanced_text)
+    st.toast("Generation complete and saved!", icon="✅")
+    st.rerun() # Refresh UI to show the new text
+
 
 # Callbacks for shared UI
 def pdf_get_llm_payload(enhanced=False) -> str:

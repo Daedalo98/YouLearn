@@ -2,23 +2,16 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from streamlit_player import st_player
+from functions import llm_settings, run_generation
 import functions
 import AI_manager as manager
-from shared_ui import render_enhancement_step, render_quiz_step, get_quiz_payload
 import spreader
-
-# Callbacks for YouTube payload generation
-def yt_get_llm_payload(enhanced=False):
-    return functions.prepare_llm_payload(enhanced)
-
-def yt_get_quiz_payload():
-    return functions.prepare_quiz_payload()
 
 # Load environment variables from the .env file
 load_dotenv()
 
 # ==========================================
-# 1. PAGE CONFIGURATION & SETUP
+# PAGE CONFIGURATION & SETUP
 # ==========================================
 st.set_page_config(layout="wide", page_title="YouTube Transcript Sync", page_icon="🎥")
 
@@ -34,66 +27,47 @@ def get_manager(): return manager.Manager()
 manager = get_manager()
 
 # ==========================================
-# 2. MODULAR FUNCTIONS (Business Logic)
-# ==========================================
-
-## moved into functions.py for better organization
-
-
-# ==========================================
-# 3. STATE INITIALIZATION
+# STATE INITIALIZATION
 # ==========================================
 
 if "transcript" not in st.session_state:
     st.session_state.transcript = []
 if "video_url" not in st.session_state:
     st.session_state.video_url = ""
+if "video_id" not in st.session_state:
+    st.session_state.video_id = ""
 if "start_time" not in st.session_state:
     st.session_state.start_time = 0.0
 if "metadata" not in st.session_state:
     st.session_state.metadata = {}
-if "video_id" not in st.session_state:
-    st.session_state.video_id = ""
 if "enhanced_text" not in st.session_state:
     st.session_state.enhanced_text = ""
 if "is_editing_enhanced" not in st.session_state:
     st.session_state.is_editing_enhanced = False
-
+    
 # zoom related states
 if "global_zoom" not in st.session_state:
     st.session_state.global_zoom = 22 # Default font size in pixels
 
 def sync_zoom(slider_key):
     """Callback to update the global zoom whenever ANY of the local sliders are moved."""
-    st.session_state.global_zoom = st.session_state[slider_key]
-
-# quiz-related states
-if "quiz_state" not in st.session_state:
-    st.session_state.quiz_state = "setup" # setup, q_gen, evaluating, answering, finished
-if "q_list" not in st.session_state:
-    st.session_state.q_list = [] # Raw strings from Qmodel
-if "evaluations" not in st.session_state:
-    st.session_state.evaluations = {} # Stores user confidence and liking
-if "a_model_data" not in st.session_state:
-    st.session_state.a_model_data = [] # Stores the final Amodel output
-if "bg_thread_status" not in st.session_state:
-    st.session_state.bg_thread_status = {"running": False, "done": False, "result": None, "error": None}
-if "q_index" not in st.session_state:
-    st.session_state.q_index = 0
-if "quiz_score" not in st.session_state:
-    st.session_state.quiz_score = 0.0
-if "regenerated_indices" not in st.session_state:
-    st.session_state.regenerated_indices = set()
+    for slider in ["zoom_step1", "zoom_step2"]:
+        if slider != slider_key:
+            st.session_state[slider] = st.session_state[slider_key]
+            st.session_state.global_zoom = st.session_state[slider_key]
 
 # ==========================================
-# 4. UI LAYOUT & INTERACTION
+# UI LAYOUT & INTERACTION
 # ==========================================
 
 # --- Sidebar ---
 with st.sidebar:
     st.title("⚙️ Settings")
-    
-    # 1. Use a form to guarantee the pasted URL syncs before the button clicks
+
+    # ---------------------------------------------------------
+    # OPTION 1: INGEST NEW VIDEO
+    # ---------------------------------------------------------
+    st.subheader("Ingest New Video")
     with st.form("fetch_transcript_form"):
         input_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
         submit_btn = st.form_submit_button("Fetch & Process Transcript", type="primary")
@@ -101,11 +75,9 @@ with st.sidebar:
     if submit_btn:
         if input_url.strip():  
             video_id = functions.extract_video_id(input_url)
-            
-            # 2. DEBUG VISUAL: Prove what the system is actually extracting
             st.toast(f"Processing ID: {video_id}", icon="🔍")
             
-            # 3. PURGE OLD STATE: Kill the old data before fetching the new!
+            # --- PURGE OLD STATE ---
             st.session_state.transcript = []
             st.session_state.metadata = {}
             st.session_state.video_url = ""
@@ -113,12 +85,11 @@ with st.sidebar:
             st.session_state.enhanced_text = ""
             st.session_state.quiz_state = "setup"
             
-            # Clean up all dynamically generated text area keys
             for key in list(st.session_state.keys()):
                 if key.startswith("text_") or key.startswith("btn_"):
                     del st.session_state[key]
             
-            # 4. NOW FETCH THE NEW DATA
+            # --- FETCH NEW DATA ---
             st.session_state.video_url = input_url
             st.session_state.video_id = video_id
             
@@ -131,24 +102,76 @@ with st.sidebar:
                     st.session_state.start_time = 0.0
                     status.update(label="Transcript Ready!", state="complete", expanded=False)
                 else:
-                    # If this fails now, the screen will correctly go blank instead of showing old data.
                     status.update(label="Failed to fetch valid data. Check API/URL.", state="error", expanded=True)
             
             st.rerun()
         else:
             st.warning("Please enter a valid YouTube URL first.")
+
+    st.divider()
+
+    # ---------------------------------------------------------
+    # OPTION 2: LOAD SAVED VIDEO
+    # ---------------------------------------------------------
+    st.subheader("Load Saved Video")
+    
+    # 1. Scan the directory to get our available files
+    cached_videos = functions.get_cached_videos(CACHE_DIR)
+    
+    if not cached_videos:
+        st.info("No saved videos found. Fetch a new URL above to get started!")
+    else:
+        # 2. Create a dropdown list. 
+        # `options` gets the list of IDs (the keys).
+        # `format_func` tells Streamlit to display the Title (the value) in the UI instead of the ID.
+        video_id = st.selectbox(
+            "Select a previous video:",
+            options=list(cached_videos.keys()),
+            format_func=lambda x: cached_videos[x]
+        )
         
-    # Sidebar Video & Controls
+        # 3. Handle the Load logic
+        if st.button("📁 Load Video", use_container_width=True):
+            
+            # --- PURGE OLD STATE (Exactly like the new fetch) ---
+            st.session_state.transcript = []
+            st.session_state.metadata = {}
+            st.session_state.video_url = ""
+            st.session_state.video_id = ""
+            st.session_state.enhanced_text = ""
+            st.session_state.quiz_state = "setup"
+            
+            for key in list(st.session_state.keys()):
+                if key.startswith("text_") or key.startswith("btn_"):
+                    del st.session_state[key]
+                    
+            # --- LOAD DATA FROM DISK ---
+            loaded_data = functions.load_cached_video(CACHE_DIR, video_id)
+            
+            if loaded_data and "segments" in loaded_data:
+                # Inject the local data into memory
+                st.session_state.transcript = loaded_data["segments"]
+                st.session_state.metadata = loaded_data.get("metadata", {})
+                st.session_state.video_id = video_id
+                st.session_state.video_url = loaded_data.get("metadata", {}).get("video_url", f"https://youtube.com/watch?v={video_id}")
+                st.session_state.start_time = 0.0
+                
+                st.toast(f"Successfully loaded '{cached_videos[video_id]}'!", icon="✅")
+                st.rerun()
+            else:
+                st.error("Failed to load the local file. It might be corrupted.")
+        
+    # ---------------------------------------------------------
+    # VIDEO PLAYBACK (Shared by both logic paths)
+    # ---------------------------------------------------------
     if st.session_state.video_id and st.session_state.transcript:
         st.divider()
         st.subheader("Video Playback")
         
-        # We construct a privacy-enhanced embed URL
         nocookie_url = f"https://www.youtube-nocookie.com/embed/{st.session_state.video_id}"
         
         st_player(
             nocookie_url,
-            # Switched autoplay to 0 so we stop spamming YouTube's servers on every rerun
             config={"playerVars": {"start": int(float(st.session_state.start_time)), "autoplay": 0}},
             key=f"player_{st.session_state.start_time}"
         )
@@ -169,8 +192,6 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 # ==========================================
 
-#if st.session_state.video_url and st.session_state.transcript:
-
 # Display Video Info
 if "metadata" in st.session_state and st.session_state.metadata:
     st.info(f"**Diagnostic Check:** Current Video ID in memory is `{st.session_state.video_id}`")
@@ -182,15 +203,14 @@ if "metadata" in st.session_state and st.session_state.metadata:
 # --- NEW: Global Read/Edit Toggle & Zoom Control ---
 st.markdown("**Markdown Supported:** Use `**bold**`, `*italic*`, `# Heading`, or `<u>underline</u>`")
 
-# We put the toggle and the zoom slider side-by-side
 ctrl_col1, ctrl_col2 = st.columns([1, 1])
 with ctrl_col1:
-    is_preview_mode = st.toggle("👁️ Preview Formatting Mode", value=False)
+    st.markdown("<p style='text-align: right;'>Text Size:</p>", unsafe_allow_html=True)
 with ctrl_col2:
     # Slider controls the font size from 10px up to a massive 50px
     with ctrl_col2:
         st.slider("🔍 Zoom Text Size (px)", min_value=10, max_value=50, value=st.session_state.global_zoom, key="zoom_step1", on_change=sync_zoom, args=("zoom_step1",), label_visibility="collapsed")
-        
+             
 transcript_container = st.container(height=600)
 
 with transcript_container:
@@ -226,32 +246,168 @@ with transcript_container:
                 functions.save_edits_to_disk(CACHE_DIR)
                 st.toast("💾 Auto-saved!", icon="✅")
 
-            if is_preview_mode:
-                st.markdown(current_text, unsafe_allow_html=True)
-            else:
-                st.text_area(
-                    "Edit Text", 
-                    value=current_text, 
-                    key=unique_txt_key,  # Applies the unique key here!
-                    label_visibility="collapsed",
-                    height=100,
-                    on_change=update_text
-                )
+            st.text_area(
+                "Edit Text", 
+                value=current_text, 
+                key=unique_txt_key,  # Applies the unique key here!
+                label_visibility="collapsed",
+                height=100,
+                on_change=update_text
+            )
         
         st.markdown("<hr style='margin: 0.2em 0px; border-top: 1px dashed #ddd;'>", unsafe_allow_html=True)
 
+st.header("✨ Step 2: Summarization via LLM")
 
-# Render exactly like we did in PDF
-render_enhancement_step(
-    doc_id=st.session_state.video_id, 
-    doc_title=st.session_state.metadata.get('title', 'Untitled Video'),
-    manager=manager, 
-    get_payload_func=yt_get_llm_payload,  
-    default_prompt="Obsidian_Academic_Note", 
-    default_temp=0.7,                     
-    default_tokens=8000,
-    CACHE_DIR = "saved_transcripts"
+cached_path = os.path.join(CACHE_DIR, f"{video_id}_enhanced.md")
+file_exists = os.path.exists(cached_path)
+
+meta = st.session_state.metadata
+
+# Extract just the text from the segment dictionaries
+text_only = "\n".join([seg.get("text", "") for seg in st.session_state.transcript])
+
+llm_payload = (
+    f"--- METADATA ---\n"
+    f"Title: {meta.get('title', 'Unknown')}\n"
+    f"Author: {meta.get('author_name', 'Unknown')}\n"
+    f"Date: {meta.get('upload_date', 'Unknown')}\n"
+    f"URL: {meta.get('video_url', 'Unknown')}\n\n"
+    f"--- REDACTED TRANSCRIPT ---\n"
+    f"{text_only}"
 )
+
+DEFAULT_TEMP = 0.5
+DEFAULT_TOKENS = 10000
+DEFAULT_PROMPT = "YouTube_Summary"
+
+ctrl_col1, ctrl_col2 = st.columns([1, 1])
+with ctrl_col1:
+    st.markdown("<p style='text-align: right;'>Text Size:</p>", unsafe_allow_html=True)
+with ctrl_col2:
+    # Slider controls the font size from 10px up to a massive 50px
+    with ctrl_col2:
+        st.slider("🔍 Zoom Text Size (px)", min_value=10, max_value=50, value=st.session_state.global_zoom, key="zoom_step2", on_change=sync_zoom, args=("zoom_step2",), label_visibility="collapsed")
+        
+with st.container(border=True):
+    col_prompt, col_output = st.columns([1, 2])
+    
+    with col_prompt:
+        st.subheader("LLM Settings")
+        with st.expander("🧠 Active Models & Gen Options", expanded=True):
+            available_models = manager.get_models()
+            default_models = ["No models found"] if not available_models else available_models
+            text_idx = default_models.index("granite4:7b-a1b-h") if "granite4:7b-a1b-h" in default_models else 0
+
+            text_model = st.selectbox("Text Generation Model", default_models, index=text_idx, key="enh_model")
+            st.divider()
+
+            temperature = st.number_input("Temperature", 0.0, 2.0, DEFAULT_TEMP, 0.1)
+            max_tokens = st.number_input("Max Tokens (Verbosity)", 100, 10000, DEFAULT_TOKENS, 100)
+            streaming_on = st.toggle("Streaming Generation", value=True)
+
+        st.subheader("System Prompts")
+        prompts_dict = functions.load_prompts(PROMPTS_FILE)
+        prompt_names = list(prompts_dict.keys())
+        
+        # Determine default index
+        default_idx = prompt_names.index(DEFAULT_PROMPT) if DEFAULT_PROMPT in prompt_names else 0
+        
+        # 1. INITIALIZE STATE FIRST
+        # We must set this before the widgets render so the default prompt is ready.
+        if "text_prompt_area" not in st.session_state:
+            st.session_state.text_prompt_area = prompts_dict.get(prompt_names[default_idx], "")
+
+        # 2. DEFINE THE CALLBACK
+        def sync_prompt_to_area():
+            """Forces the text area state to match the newly selected dropdown item."""
+            selected = st.session_state.text_prompt_sel
+            st.session_state.text_prompt_area = prompts_dict.get(selected, "")
+
+        # 3. RENDER SELECTBOX AND CAPTURE THE NAME
+        selected_prompt_name = st.selectbox(
+            "Active Prompt", 
+            prompt_names, 
+            index=default_idx, 
+            key="text_prompt_sel",
+            on_change=sync_prompt_to_area
+        )
+        
+        # 4. RENDER TEXT AREA (No 'value' parameter needed, the key handles it)
+        system_prompt = st.text_area("Edit Current Prompt", height=200, key="text_prompt_area")
+        
+        # 5. USE THE SELECTED NAME FOR SAVING (Restoring your original feature)
+        with st.expander("Save / Modify Prompt"):
+            # Here is where selected_prompt_name is actually used!
+            new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_prompt_name)
+            
+            if st.button("Save Prompt", use_container_width=True):
+                if new_prompt_name and system_prompt:
+                    functions.save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt)
+                    st.success("Saved!")
+                    st.rerun()
+
+    # UI Rendering based on file existence
+    if file_exists:
+        st.info("📝 A generated note already exists for this document.")
+        col_load, col_recreate = st.columns(2)
+        
+        with col_load:
+            if st.button("📂 Load Existing Note", use_container_width=True):
+                with open(cached_path, "r", encoding="utf-8") as f:
+                    st.session_state.enhanced_text = f.read()
+                    
+        with col_recreate:
+            # Modern Streamlit popup alternative
+            with st.popover("⚠️ Recreate Note", use_container_width=True):
+                st.markdown("This will **permanently overwrite** your existing Markdown note and any manual edits. Are you sure?")
+                if st.button("Yes, Overwrite Note", type="primary", use_container_width=True):
+                    functions.run_generation(
+                        manager, 
+                        llm_payload, 
+                        system_prompt, 
+                        text_model, 
+                        temperature, 
+                        max_tokens, 
+                        cached_path, 
+                        streaming_on
+                        )
+                    
+                    st.rerun() # Refresh UI to show the new text
+    else:
+        if st.button("🚀 Generate Note", use_container_width=True, type="primary"):
+            functions.run_generation(
+                manager, 
+                llm_payload, 
+                system_prompt, 
+                text_model, 
+                temperature, 
+                max_tokens, 
+                cached_path, 
+                streaming_on
+                )
+
+    with col_output:
+        st.subheader("Enhanced Output (.md)")
+
+        if st.session_state.enhanced_text:
+            mode_enh = st.toggle("✏️ Edit Markdown Mode", value=st.session_state.is_editing_enhanced)
+            st.session_state.is_editing_enhanced = mode_enh
+            
+            if st.session_state.is_editing_enhanced:
+                edited = st.text_area("Edit Final Note", st.session_state.enhanced_text, height=600, label_visibility="collapsed")
+                if st.button("Save Markdown Edits", type="primary"):
+                    st.session_state.enhanced_text = edited
+                    st.toast("Edits saved!", icon="✅")
+                    st.session_state.is_editing_enhanced = False
+                    with open(os.path.join(CACHE_DIR, f"{video_id}_enhanced.md"), "w", encoding="utf-8") as f:
+                        f.write(st.session_state.enhanced_text)
+                    st.rerun()
+            else:
+                st.markdown(st.session_state.enhanced_text)
+                
+            st.download_button("📥 Download Note as .md", st.session_state.enhanced_text, f"{video_id}.md", "text/markdown", use_container_width=True)
+
 
 
 # ==========================================
@@ -267,11 +423,3 @@ current_enhanced_text = st.session_state.get("enhanced_text", "")
 spreader.render_spreader_module(current_enhanced_text) # <-- 2. INJECT HERE
 
 # ==========================================
-
-
-render_quiz_step(
-    doc_id=st.session_state.video_id,
-    manager=manager,
-    get_quiz_payload_func=get_quiz_payload,
-    CACHE_DIR = "saved_transcripts"
-)
