@@ -338,7 +338,7 @@ def llm_settings(manager: manager.Manager, default_model: str, default_temp: flo
         # Here is where selected_prompt_name is actually used!
         new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_prompt_name)
         
-        if st.button("Save Prompt", use_container_width=True):
+        if st.button("Save Prompt", width='stretch'):
             if new_prompt_name and system_prompt:
                 save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt)
                 st.success("Saved!")

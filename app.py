@@ -186,7 +186,7 @@ if st.session_state.video_url and st.session_state.transcript:
             btn_col, text_col = st.columns([btn_ratio, text_ratio])
             
             with btn_col:
-                if st.button(f"⏱️ {timestamp_str}", key=f"btn_{i}", use_container_width=True):
+                if st.button(f"⏱️ {timestamp_str}", key=f"btn_{i}", width='stretch'):
                     st.session_state.start_time = start_sec
                     st.rerun()
             
@@ -247,13 +247,13 @@ if st.session_state.video_url and st.session_state.transcript:
             
             with st.expander("Save / Modify Prompt"):
                 new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_prompt_name)
-                if st.button("Save Prompt", use_container_width=True):
+                if st.button("Save Prompt", width='stretch'):
                     if new_prompt_name and system_prompt:
                         functions.save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt)
                         st.success("Saved!")
                         st.rerun()
                         
-            if st.button("🚀 Generate Note", use_container_width=True, type="primary"):
+            if st.button("🚀 Generate Note", width='stretch', type="primary"):
                 if not st.session_state.transcript:
                     st.warning("Please fetch a transcript in Step 1 first.")
                 else:
@@ -292,7 +292,7 @@ if st.session_state.video_url and st.session_state.transcript:
                         f.write(st.session_state.enhanced_text)
 
             # regenerate with notes: if the user has already generated once, they may have made edits in the text area. We want to use those edits as the new source of truth for the LLM input to allow iterative refinement without losing changes.
-            if st.button("🔄 Regenerate with Notes", use_container_width=True):
+            if st.button("🔄 Regenerate with Notes", width='stretch'):
                 if not st.session_state.enhanced_text:
                     st.warning("No existing enhanced text found. Please generate a note first.")
                 else:
@@ -349,7 +349,7 @@ if st.session_state.video_url and st.session_state.transcript:
                     data=st.session_state.enhanced_text,
                     file_name=f"{st.session_state.metadata.get('title', 'note')}.md",
                     mime="text/markdown",
-                    use_container_width=True
+                    width='stretch'
                 )
             else:
                 st.caption("*No enhanced text generated yet. Click 'Generate Note' on the left.*")
@@ -408,7 +408,7 @@ if st.session_state.video_url and st.session_state.transcript:
             
             st.divider()
             if st.session_state.quiz_state != "setup":
-                if st.button("🔄 Reset Exam Engine", use_container_width=True):
+                if st.button("🔄 Reset Exam Engine", width='stretch'):
                     st.session_state.quiz_state = "setup"
                     st.session_state.q_list = []
                     st.session_state.evaluations = {}
@@ -432,7 +432,7 @@ if st.session_state.video_url and st.session_state.transcript:
                 # 1. SETUP STATE
                 if st.session_state.quiz_state == "setup":
                     st.info(f"Engine Ready: {quiz_n} Questions.")
-                    if st.button("🚀 Generate Exam Concepts (Q-Model)", type="primary", use_container_width=True):
+                    if st.button("🚀 Generate Exam Concepts (Q-Model)", type="primary", width='stretch'):
                         st.session_state.quiz_state = "q_gen"
                         st.rerun()
 
@@ -522,7 +522,7 @@ if st.session_state.video_url and st.session_state.transcript:
                         st.slider("Liking Score (0=Useless, 5=Great)", 0, 5, 3, key=f"like_{i}")
                         st.divider()
                     
-                    if st.button("Submit Evaluations & Proceed", type="primary", use_container_width=True):
+                    if st.button("Submit Evaluations & Proceed", type="primary", width='stretch'):
                         for i in range(len(st.session_state.q_list)):
                             st.session_state.evaluations[i] = {
                                 "confidence": st.session_state[f"conf_{i}"],
@@ -593,7 +593,7 @@ if st.session_state.video_url and st.session_state.transcript:
                             st.radio("Options", opts, key=f"user_ans_{idx}", label_visibility="collapsed")
                             st.markdown("<hr style='margin: 1em 0px; border-top: 1px dashed #bbb;'>", unsafe_allow_html=True)
                             
-                        if st.form_submit_button("Submit Final Answers", type="primary", use_container_width=True):
+                        if st.form_submit_button("Submit Final Answers", type="primary", width='stretch'):
                             # Save all answers from the form directly into memory
                             for idx in range(len(st.session_state.a_model_data)):
                                 st.session_state.a_model_data[idx]['user_choice'] = st.session_state[f"user_ans_{idx}"]

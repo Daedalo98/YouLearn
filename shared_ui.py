@@ -110,7 +110,7 @@ def render_enhancement_step(
                 # Here is where selected_prompt_name is actually used!
                 new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_prompt_name)
                 
-                if st.button("Save Prompt", use_container_width=True):
+                if st.button("Save Prompt", width='stretch'):
                     if new_prompt_name and system_prompt:
                         functions.save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt)
                         st.success("Saved!")
@@ -152,19 +152,19 @@ def render_enhancement_step(
                 col_load, col_recreate = st.columns(2)
                 
                 with col_load:
-                    if st.button("📂 Load Existing Note", use_container_width=True):
+                    if st.button("📂 Load Existing Note", width='stretch'):
                         with open(cached_path, "r", encoding="utf-8") as f:
                             st.session_state.enhanced_text = f.read()
                             
                 with col_recreate:
                     # Modern Streamlit popup alternative
-                    with st.popover("⚠️ Recreate Note", use_container_width=True):
+                    with st.popover("⚠️ Recreate Note", width='stretch'):
                         st.markdown("This will **permanently overwrite** your existing Markdown note and any manual edits. Are you sure?")
-                        if st.button("Yes, Overwrite Note", type="primary", use_container_width=True):
+                        if st.button("Yes, Overwrite Note", type="primary", width='stretch'):
                             run_generation()
                             st.rerun() # Refresh UI to show the new text
             else:
-                if st.button("🚀 Generate Note", use_container_width=True, type="primary"):
+                if st.button("🚀 Generate Note", width='stretch', type="primary"):
                     run_generation()
 
         with col_output:
@@ -187,7 +187,7 @@ def render_enhancement_step(
                 else:
                     st.markdown(st.session_state.enhanced_text)
                     
-                st.download_button("📥 Download Note as .md", st.session_state.enhanced_text, f"{doc_title}.md", "text/markdown", use_container_width=True)
+                st.download_button("📥 Download Note as .md", st.session_state.enhanced_text, f"{doc_title}.md", "text/markdown", width='stretch')
 
 
 def get_quiz_payload():
@@ -312,7 +312,7 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
             if st.session_state.quiz_state != "setup":
                 col_r1, col_r2 = st.columns(2)
                 with col_r1:
-                    if st.button("🔄 Reset Questions", use_container_width=True, help="Wipes everything and starts over."):
+                    if st.button("🔄 Reset Questions", width='stretch', help="Wipes everything and starts over."):
                         st.session_state.quiz_state = "setup"
                         st.session_state.q_list = []
                         st.session_state.evaluations = {}
@@ -322,7 +322,7 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                         st.session_state.q_payload_log = ""
                         st.rerun()
                 with col_r2:
-                    if st.button("🔄 Reset Answers", use_container_width=True, help="Clears your selections to retake the test."):
+                    if st.button("🔄 Reset Answers", width='stretch', help="Clears your selections to retake the test."):
                         if st.session_state.quiz_state in ["taking_quiz", "reviewing"]:
                             # Purge the user's choices but keep the A-Model generated data
                             for item in st.session_state.a_model_data:
@@ -342,7 +342,7 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                 
                 if st.session_state.quiz_state == "setup":
                     st.info(f"Engine Ready: {quiz_n} Questions.")
-                    if st.button("🚀 Generate Exam Concepts (Q-Model)", type="primary", use_container_width=True):
+                    if st.button("🚀 Generate Exam Concepts (Q-Model)", type="primary", width='stretch'):
                         st.session_state.quiz_state = "q_gen"
                         st.rerun()
 
@@ -434,7 +434,7 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                         st.slider("Liking Score (0=Useless, 5=Great)", 0, 5, 3, key=f"like_{i}")
                         st.divider()
                     
-                    if st.button("Submit Evaluations & Proceed", type="primary", use_container_width=True):
+                    if st.button("Submit Evaluations & Proceed", type="primary", width='stretch'):
                         for i in range(len(st.session_state.q_list)):
                             st.session_state.evaluations[i] = {
                                 "confidence": st.session_state[f"conf_{i}"],
@@ -512,7 +512,7 @@ def render_quiz_step(doc_id: str, manager, get_quiz_payload_func, CACHE_DIR: str
                             st.radio("Options", opts, index=default_index, key=f"user_ans_{idx}", label_visibility="collapsed")
                             st.markdown("<hr style='margin: 1em 0px; border-top: 1px dashed #bbb;'>", unsafe_allow_html=True)
                             
-                        if st.form_submit_button("Submit Final Answers", type="primary", use_container_width=True):
+                        if st.form_submit_button("Submit Final Answers", type="primary", width='stretch'):
                             for idx in range(len(st.session_state.a_model_data)):
                                 st.session_state.a_model_data[idx]['user_choice'] = st.session_state[f"user_ans_{idx}"]
                             st.session_state.quiz_state = "reviewing"

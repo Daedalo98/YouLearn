@@ -333,7 +333,7 @@ def render_query_enhancement_step(
             
             with st.expander("Save / Modify Prompt"):
                 new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_prompt_name)
-                if st.button("Save Prompt", use_container_width=True):
+                if st.button("Save Prompt", width='stretch'):
                     if new_prompt_name and system_prompt:
                         try:
                             functions.save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt)
@@ -343,7 +343,7 @@ def render_query_enhancement_step(
                             st.error(f"Failed to save prompt: {e}")
 
             # GENERATE LOGIC
-            if st.button("🚀 Generate Search Query", use_container_width=True, type="primary"):
+            if st.button("🚀 Generate Search Query", width='stretch', type="primary"):
                 if not raw_query.strip():
                     st.error("Please enter your raw thoughts first.")
                 else:
@@ -605,7 +605,7 @@ else:
         st.info("💡 Because editing chunks is isolated for smooth typing, you must lock your selections to update the final step.")
         
         # This button forces the whole page to refresh, unlocking Step 4
-        if st.button("Lock Curated Context & Proceed to Synthesis ➡️", type="primary", use_container_width=True):
+        if st.button("Lock Curated Context & Proceed to Synthesis ➡️", type="primary", width='stretch'):
             st.rerun()
             
         # This will now correctly display after the rerun
@@ -672,7 +672,7 @@ else:
             
             with st.expander("Save / Modify Prompt"):
                 new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_synth_prompt, key="synth_save_name")
-                if st.button("Save Prompt", use_container_width=True, key="synth_save_btn"):
+                if st.button("Save Prompt", width='stretch', key="synth_save_btn"):
                     if new_prompt_name and system_prompt_synth:
                         try:
                             functions.save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt_synth)
@@ -682,7 +682,7 @@ else:
                             st.error(f"Failed to save prompt: {e}")
 
             # --- EXECUTE GENERATION ---
-            if st.button("🚀 Generate Final Academic Text", use_container_width=True, type="primary"):
+            if st.button("🚀 Generate Final Academic Text", width='stretch', type="primary"):
                 
                 # 1. Prepare the exact context payload strictly from approved chunks
                 context_blocks = []
@@ -772,7 +772,7 @@ else:
                     data=st.session_state.generated_synthesis, 
                     file_name="Advanced_RAG_Synthesis.md", 
                     mime="text/markdown", 
-                    use_container_width=True
+                    width='stretch'
                 )
 
 

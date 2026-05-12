@@ -2,7 +2,6 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from streamlit_player import st_player
-from functions import llm_settings, run_generation
 import functions
 import AI_manager as manager
 import spreader
@@ -74,8 +73,6 @@ with st.sidebar:
     
     if submit_btn:
         if input_url.strip():  
-            video_id = functions.extract_video_id(input_url)
-            st.toast(f"Processing ID: {video_id}", icon="🔍")
             
             # --- PURGE OLD STATE ---
             st.session_state.transcript = []
@@ -84,6 +81,9 @@ with st.sidebar:
             st.session_state.video_id = ""
             st.session_state.enhanced_text = ""
             st.session_state.quiz_state = "setup"
+
+            video_id = functions.extract_video_id(input_url)
+            st.toast(f"Processing ID: {video_id}", icon="🔍")
             
             for key in list(st.session_state.keys()):
                 if key.startswith("text_") or key.startswith("btn_"):
@@ -115,41 +115,41 @@ with st.sidebar:
     # ---------------------------------------------------------
     st.subheader("Load Saved Video")
     
-    # 1. Scan the directory to get our available files
     cached_videos = functions.get_cached_videos(CACHE_DIR)
     
     if not cached_videos:
         st.info("No saved videos found. Fetch a new URL above to get started!")
     else:
-        # 2. Create a dropdown list. 
-        # `options` gets the list of IDs (the keys).
-        # `format_func` tells Streamlit to display the Title (the value) in the UI instead of the ID.
-        video_id = st.selectbox(
-            "Select a previous video:",
-            options=list(cached_videos.keys()),
-            format_func=lambda x: cached_videos[x]
-        )
-        
-        # 3. Handle the Load logic
-        if st.button("📁 Load Video", use_container_width=True):
+        # Wrap the selectbox and load button inside a form
+        with st.form("load_saved_video_form"):
+            video_id = st.selectbox(
+                "Select a previous video:",
+                options=list(cached_videos.keys()),
+                format_func=lambda x: cached_videos[x]
+            )
             
-            # --- PURGE OLD STATE (Exactly like the new fetch) ---
+            # Form submit button acts as your load button
+            load_btn = st.form_submit_button("📁 Load Video", type="secondary", use_container_width=True)
+            
+        if load_btn:
+            # --- PURGE OLD STATE ---
             st.session_state.transcript = []
             st.session_state.metadata = {}
             st.session_state.video_url = ""
             st.session_state.video_id = ""
             st.session_state.enhanced_text = ""
             st.session_state.quiz_state = "setup"
-            
+
             for key in list(st.session_state.keys()):
                 if key.startswith("text_") or key.startswith("btn_"):
                     del st.session_state[key]
                     
             # --- LOAD DATA FROM DISK ---
             loaded_data = functions.load_cached_video(CACHE_DIR, video_id)
+            if not loaded_data:
+                st.error("No data found for this video. It might have been deleted or corrupted.")
             
             if loaded_data and "segments" in loaded_data:
-                # Inject the local data into memory
                 st.session_state.transcript = loaded_data["segments"]
                 st.session_state.metadata = loaded_data.get("metadata", {})
                 st.session_state.video_id = video_id
@@ -160,7 +160,7 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error("Failed to load the local file. It might be corrupted.")
-        
+
     # ---------------------------------------------------------
     # VIDEO PLAYBACK (Shared by both logic paths)
     # ---------------------------------------------------------
@@ -234,7 +234,7 @@ with transcript_container:
         unique_txt_key = f"text_{st.session_state.video_id}_{i}"
         
         with btn_col:
-            if st.button(f"⏱️ {timestamp_str}", key=unique_btn_key, use_container_width=True):
+            if st.button(f"⏱️ {timestamp_str}", key=unique_btn_key, width='stretch'):
                 st.session_state.start_time = start_sec
                 st.rerun()
         
@@ -259,7 +259,7 @@ with transcript_container:
 
 st.header("✨ Step 2: Summarization via LLM")
 
-cached_path = os.path.join(CACHE_DIR, f"{video_id}_enhanced.md")
+cached_path = os.path.join(CACHE_DIR, f"{st.session_state.video_id}_enhanced.md")
 file_exists = os.path.exists(cached_path)
 
 meta = st.session_state.metadata
@@ -341,7 +341,7 @@ with st.container(border=True):
             # Here is where selected_prompt_name is actually used!
             new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_prompt_name)
             
-            if st.button("Save Prompt", use_container_width=True):
+            if st.button("Save Prompt", width='stretch'):
                 if new_prompt_name and system_prompt:
                     functions.save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt)
                     st.success("Saved!")
@@ -353,15 +353,15 @@ with st.container(border=True):
         col_load, col_recreate = st.columns(2)
         
         with col_load:
-            if st.button("📂 Load Existing Note", use_container_width=True):
+            if st.button("📂 Load Existing Note", width='stretch'):
                 with open(cached_path, "r", encoding="utf-8") as f:
                     st.session_state.enhanced_text = f.read()
                     
         with col_recreate:
             # Modern Streamlit popup alternative
-            with st.popover("⚠️ Recreate Note", use_container_width=True):
+            with st.popover("⚠️ Recreate Note", width='stretch'):
                 st.markdown("This will **permanently overwrite** your existing Markdown note and any manual edits. Are you sure?")
-                if st.button("Yes, Overwrite Note", type="primary", use_container_width=True):
+                if st.button("Yes, Overwrite Note", type="primary", width='stretch'):
                     functions.run_generation(
                         manager, 
                         llm_payload, 
@@ -375,7 +375,7 @@ with st.container(border=True):
                     
                     st.rerun() # Refresh UI to show the new text
     else:
-        if st.button("🚀 Generate Note", use_container_width=True, type="primary"):
+        if st.button("🚀 Generate Note", width='stretch', type="primary"):
             functions.run_generation(
                 manager, 
                 llm_payload, 
@@ -400,18 +400,18 @@ with st.container(border=True):
                     st.session_state.enhanced_text = edited
                     st.toast("Edits saved!", icon="✅")
                     st.session_state.is_editing_enhanced = False
-                    with open(os.path.join(CACHE_DIR, f"{video_id}_enhanced.md"), "w", encoding="utf-8") as f:
+                    with open(os.path.join(CACHE_DIR, f"{st.session_state.video_id}_enhanced.md"), "w", encoding="utf-8") as f:
                         f.write(st.session_state.enhanced_text)
                     st.rerun()
             else:
                 st.markdown(st.session_state.enhanced_text)
                 
-            st.download_button("📥 Download Note as .md", st.session_state.enhanced_text, f"{video_id}.md", "text/markdown", use_container_width=True)
+            st.download_button("📥 Download Note as .md", st.session_state.enhanced_text, f"{st.session_state.video_id}.md", "text/markdown", width='stretch')
 
 
 
 # ==========================================
-# NEW: SPREADER MODULE INJECTION
+# SPREADER MODULE INJECTION
 # ==========================================
 # We pass the 'enhanced_text' from session state into the spreader.
 # It will only show up as an expander.
@@ -422,4 +422,21 @@ st.header("Spreader")
 current_enhanced_text = st.session_state.get("enhanced_text", "")
 spreader.render_spreader_module(current_enhanced_text) # <-- 2. INJECT HERE
 
+
 # ==========================================
+# STEP 3: METACOGNITIVE QUIZ 
+# ==========================================
+
+from shared_ui import render_quiz_step
+
+def get_quiz_payload():
+    if st.session_state.get('enhanced_text'):
+        return st.session_state.enhanced_text
+    return st.session_state.pdf_markdown
+
+render_quiz_step(
+    doc_id=st.session_state.video_id, 
+    manager=manager, 
+    get_quiz_payload_func=get_quiz_payload,
+    CACHE_DIR = CACHE_DIR
+)

@@ -265,7 +265,7 @@ if st.session_state.doc_id:
         with parse_col1:
             parser_choice = st.selectbox("Select Parsing Engine", ["PyMuPDF4LLM (Recommended)", "Docling (OCR-heavy)"])
         with parse_col2:
-            if st.button("▶️ Run Parser", use_container_width=True):
+            if st.button("▶️ Run Parser", width='stretch'):
                 with st.spinner(f"Parsing with {parser_choice}..."):
                     if "PyMuPDF" in parser_choice:
                         # Important: image_path should usually be the subfolder name 
