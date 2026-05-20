@@ -105,6 +105,40 @@ with col2:
     st.session_state.rag_config['embedding_type'] = embedding_type
     #st.session_state.rag_config['llm_type'] = llm_type
 
+
+
+
+
+
+
+
+# ---------------------------------------------------------
+# DATABASE PERSISTENCE & INITIALIZATION (Place this BEFORE the button)
+# ---------------------------------------------------------
+data_path = st.session_state.rag_config.get('data_path', st.session_state.current_path)
+persist_directory = os.path.join(data_path, "chroma_db")
+
+# Automatically load the database if it exists on disk, so it's visible on future loads
+if "vector_db" not in st.session_state:
+    if os.path.exists(persist_directory) and len(os.listdir(persist_directory)) > 0:
+        try:
+            embeddings = OllamaEmbeddings(model=st.session_state.rag_config.get('emb_model_name', "snowflake-arctic-embed2:568m"))
+            st.session_state.vector_db = Chroma(
+                persist_directory=persist_directory, 
+                embedding_function=embeddings
+            )
+            st.success("🔄 Existing VectorDB successfully reconnected on load!")
+        except Exception as e:
+            st.sidebar.error(f"Could not auto-load existing DB: {e}")
+    else:
+        st.session_state.vector_db = None
+
+# Display DB status in the UI
+if st.session_state.vector_db is not None:
+    st.info(f"🟢 Active Database Loaded: `{persist_directory}`")
+else:
+    st.warning("🔴 No active database loaded in this session yet.")
+
 # ---------------------------------------------------------
 # STEP 1b: EMBEDDING & CHUNKING PARAMETERS
 # ---------------------------------------------------------
@@ -133,7 +167,10 @@ with st.expander("⚙️ Splitting, Chunking & Embedding Parameters", expanded=T
         embedding_dimensions = st.number_input("Embedding Dimensions (if configurable)", min_value=128, max_value=8192, value=1536)
         distance_metric = st.selectbox("Distance Metric", ["Cosine Similarity", "L2 (Euclidean)", "Inner Product"])
 
-# Save config button
+
+# ---------------------------------------------------------
+# STEP 1b: EXECUTE DATABASE CREATION BUTTON
+# ---------------------------------------------------------
 if st.button("Save Step 1 Configuration and Execute Database Creation"):
     st.session_state.rag_config.update({
         'chunk_strategy': chunk_strategy,
@@ -144,114 +181,81 @@ if st.button("Save Step 1 Configuration and Execute Database Creation"):
         'embedding_dimensions': embedding_dimensions,
         'distance_metric': distance_metric
     })
-    st.success("✅ All parameters are now globally accessible in session state.")
+    
+    config = st.session_state.rag_config
+    
+    with st.spinner("Preparing pipeline..."):
+        try:
+            embeddings = OllamaEmbeddings(model=config['emb_model_name'])
+            metric_mapping = {"Cosine Similarity": "cosine", "L2 (Euclidean)": "l2", "Inner Product": "ip"}
+            collection_metadata = {"hnsw:space": metric_mapping.get(config['distance_metric'], "cosine")}
 
-    if not st.session_state.rag_config:
-        st.error("⚠️ Please save your Step 1 Configuration first.")
-    else:
-        config = st.session_state.rag_config
-        data_path = config['data_path']
-        persist_directory = os.path.join(data_path, "chroma_db")
-        db_action = config.get('db_action', "Create New")
-        
-        with st.spinner("Preparing pipeline..."):
-            try:
-                # 1. Initialize Embeddings and Chroma settings
-                # embeddings = ai_manager.get_embedding(config['emb_model_name'])
-                embeddings = OllamaEmbeddings(model=config['emb_model_name']) # Adjust based on how AI_manager handles embeddings
+            # Handle Wiping
+            if config.get('db_action') == "Wipe and Rebuild entirely" and os.path.exists(persist_directory):
+                shutil.rmtree(persist_directory)
+                st.toast("Old database wiped.")
+                st.session_state.vector_db = None
 
-                metric_mapping = {"Cosine Similarity": "cosine", "L2 (Euclidean)": "l2", "Inner Product": "ip"}
-                collection_metadata = {"hnsw:space": metric_mapping.get(config['distance_metric'], "cosine")}
+            # Initialize / Create the DB client
+            vector_db = Chroma(
+                persist_directory=persist_directory, 
+                embedding_function=embeddings,
+                collection_metadata=collection_metadata
+            )
 
-                # 2. Handle DB Wiping if requested
-                if db_action == "Wipe and Rebuild entirely" and os.path.exists(persist_directory):
-                    shutil.rmtree(persist_directory)
-                    st.toast("Old database wiped.")
+            # Load Markdown Files (Using the exclude fix from earlier)
+            st.toast("Scanning for Markdown files...")
+            loader = DirectoryLoader(data_path, glob="**/*.md", exclude=["**/chroma_db/**"], loader_cls=TextLoader)
+            all_docs = loader.load()
+            
+            if not all_docs:
+                st.warning(f"No .md files found in {data_path}.")
+                time.sleep(1)
+                st.rerun()
 
-                # 3. Initialize Chroma DB client
-                vector_db = Chroma(
-                    persist_directory=persist_directory, 
-                    embedding_function=embeddings,
-                    collection_metadata=collection_metadata
-                )
+            # Smart Append Filter
+            docs_to_process = all_docs
+            if config.get('db_action') == "Append new files only":
+                try:
+                    existing_data = vector_db.get(include=["metadatas"])
+                    if existing_data and existing_data['metadatas']:
+                        existing_sources = set(meta.get('source') for meta in existing_data['metadatas'])
+                        docs_to_process = [d for d in all_docs if d.metadata.get('source') not in existing_sources]
+                except Exception as e:
+                    st.warning(f"Could not read existing DB metadata: {e}")
 
-                # 4. Load Markdown Files
-                st.toast("Scanning for Markdown files...")
-                loader = DirectoryLoader(data_path, glob="**/*.md", loader_cls=TextLoader)
-                all_docs = loader.load()
-                
-                if not all_docs:
-                    st.warning(f"No .md files found in {data_path}.")
-                    time.sleep(1)
-                    st.rerun()
-
-                # 5. Filter out already embedded files (Smart Append)
-                docs_to_process = all_docs
-                if db_action == "Append new files only":
-                    try:
-                        existing_data = vector_db.get(include=["metadatas"])
-                        if existing_data and existing_data['metadatas']:
-                            existing_sources = set(meta.get('source') for meta in existing_data['metadatas'])
-                            docs_to_process = [d for d in all_docs if d.metadata.get('source') not in existing_sources]
-                    except Exception as e:
-                        st.warning(f"Could not read existing DB metadata, processing all docs. Error: {e}")
-
-                if not docs_to_process:
-                    st.success("✅ Database is already up to date! No new files to embed.")
-                    st.session_state.vector_db = vector_db
-                    time.sleep(1)
-                    st.rerun()
-
-                st.info(f"📄 Found {len(docs_to_process)} new document(s) to process (out of {len(all_docs)} total).")
-
-                # 6. Configure Splitter
-                if config['chunk_strategy'] == "Recursive Character":
-                    splitter = RecursiveCharacterTextSplitter(chunk_size=config['chunk_size'], chunk_overlap=config['chunk_overlap'], separators=config['separators'])
-                elif config['chunk_strategy'] == "Strict Character":
-                    splitter = CharacterTextSplitter(chunk_size=config['chunk_size'], chunk_overlap=config['chunk_overlap'], separator=config['separators'][0])
-                else: 
-                    splitter = TokenTextSplitter(chunk_size=config['chunk_size'], chunk_overlap=config['chunk_overlap'])
-
-                # 7. Document-Level Batching & ETA Execution
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                eta_text = st.empty()
-                
-                start_time = time.time()
-                total_docs = len(docs_to_process)
-                total_chunks_created = 0
-
-                for i, doc in enumerate(docs_to_process):
-                    # Process ONE document
-                    chunks = splitter.split_documents([doc])
-                    total_chunks_created += len(chunks)
-                    
-                    status_text.text(f"🧠 Splitting & Embedding document {i+1}/{total_docs}: {os.path.basename(doc.metadata.get('source', 'Unknown'))}...")
-                    
-                    if chunks:
-                        vector_db.add_documents(chunks)
-                    
-                    # Update Progress & Calculate ETA
-                    docs_completed = i + 1
-                    progress_bar.progress(docs_completed / total_docs)
-                    
-                    elapsed_time = time.time() - start_time
-                    avg_time_per_doc = elapsed_time / docs_completed
-                    remaining_docs = total_docs - docs_completed
-                    eta_seconds = int(avg_time_per_doc * remaining_docs)
-                    
-                    eta_str = str(timedelta(seconds=eta_seconds))
-                    eta_text.text(f"⏱️ Estimated Time Remaining: {eta_str}")
-
-                # Cleanup UI and Save State
-                eta_text.empty()
-                status_text.success(f"✅ Successfully processed {total_docs} document(s) into {total_chunks_created} chunks!")
-                
+            if not docs_to_process:
+                st.success("✅ Database is already up to date!")
                 st.session_state.vector_db = vector_db
-                st.success(f"✅ VectorDB loaded and ready at `{persist_directory}`!")
+                time.sleep(1)
+                st.rerun()
 
-            except Exception as e:
-                st.error(f"❌ An error occurred during VectorDB operations: {str(e)}")
+            # Configure Splitter
+            if config['chunk_strategy'] == "Recursive Character":
+                splitter = RecursiveCharacterTextSplitter(chunk_size=config['chunk_size'], chunk_overlap=config['chunk_overlap'], separators=config['separators'])
+            elif config['chunk_strategy'] == "Strict Character":
+                splitter = CharacterTextSplitter(chunk_size=config['chunk_size'], chunk_overlap=config['chunk_overlap'], separator=config['separators'][0])
+            else: 
+                splitter = TokenTextSplitter(chunk_size=config['chunk_size'], chunk_overlap=config['chunk_overlap'])
+
+            # Batching process
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            for i, doc in enumerate(docs_to_process):
+                chunks = splitter.split_documents([doc])
+                if chunks:
+                    vector_db.add_documents(chunks)
+                progress_bar.progress((i + 1) / len(docs_to_process))
+            
+            # CRITICAL: Save back to session state so it survives the upcoming rerun
+            st.session_state.vector_db = vector_db
+            st.success("✅ VectorDB loaded and saved to session!")
+            time.sleep(1)
+            st.rerun() # Force rerun to refresh the top-level UI indicators
+
+        except Exception as e:
+            st.error(f"❌ An error occurred: {str(e)}")
 
 
 # ---------------------------------------------------------

@@ -161,9 +161,11 @@ with st.sidebar:
             else:
                 st.error("Failed to load the local file. It might be corrupted.")
 
+
     # ---------------------------------------------------------
     # VIDEO PLAYBACK (Shared by both logic paths)
     # ---------------------------------------------------------
+
     if st.session_state.video_id and st.session_state.transcript:
         st.divider()
         st.subheader("Video Playback")
@@ -175,6 +177,7 @@ with st.sidebar:
             config={"playerVars": {"start": int(float(st.session_state.start_time)), "autoplay": 0}},
             key=f"player_{st.session_state.start_time}"
         )
+        
 
 # --- Main Layout ---
 st.title("🎬 YouTube Transcript Editor")
@@ -432,7 +435,9 @@ from shared_ui import render_quiz_step
 def get_quiz_payload():
     if st.session_state.get('enhanced_text'):
         return st.session_state.enhanced_text
-    return st.session_state.pdf_markdown
+    else:
+        st.warning("No enhanced text available yet. Using original transcript for quiz generation.")
+        return st.session_state.transcript
 
 render_quiz_step(
     doc_id=st.session_state.video_id, 
