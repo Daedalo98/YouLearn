@@ -10,6 +10,9 @@ import hashlib
 import trafilatura
 from urllib.parse import urlparse
 
+from youtube_transcript_api import YouTubeTranscriptApi
+
+
 ## --- YOUTUBE UTILS ---
 
 def extract_video_id(url: str) -> str:
@@ -63,74 +66,61 @@ def fetch_youtube_metadata(video_url: str) -> dict:
     
     return meta_data
 
-def fetch_transcript_with_logs(CACHE_DIR: str, video_url: str, video_id: str) -> dict:
-    """Checks local storage first. If not found, fetches API, adds metadata, and saves the full JSON."""
-    if not video_id:
-        st.error("❌ Could not extract a valid Video ID to use for storage.")
-        return {}
-
-    cache_filepath = os.path.join(CACHE_DIR, f"{video_id}.json")
-
-    # --- 1. Check Local Cache (Now expects a dict) ---
-    st.write(f"🔍 Checking local storage for `{video_id}.json`...")
-    if os.path.exists(cache_filepath):
-        try:
-            with open(cache_filepath, "r", encoding="utf-8") as f:
-                full_data = json.load(f)
-            st.success("✅ Full transcript data loaded from local storage!")
-            return full_data
-        except Exception as e:
-            st.error(f"⚠️ Error reading local cache: {e}. Falling back to API.")
-
-    # --- 2. Fetch from API ---
-    st.write("🌐 Not found locally. Calling Transcript API...")
-    api_key = os.getenv("TRANSCRIPT_API_KEY")
-    if not api_key:
-        st.error("❌ API Key missing! Please add TRANSCRIPT_API_KEY to your .env file.")
-        return {}
-
-    endpoint = "https://transcriptapi.com/api/v2/youtube/transcript"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    params = {"video_url": video_url, "format": "json"}
-
+def fetch_transcript_with_logs(url: str, video_id: str) -> dict:
+    """
+    Fetches transcript using the free youtube-transcript-api 
+    and grabs metadata using YouTube's free oEmbed endpoint.
+    """
+    st.write(f"🔍 Starting extraction for video ID: `{video_id}`...")
+    
+    # --- 1. Fetch Metadata (oEmbed) ---
+    st.write("📊 Fetching video metadata (title, author)...")
+    metadata = {
+        "title": "Unknown Title",
+        "author_name": "Unknown Channel",
+        "video_url": url,
+        "upload_date": "Unknown"
+    }
+    
     try:
-        response = requests.get(endpoint, headers=headers, params=params)
-        response.raise_for_status()  
-        api_data = response.json()
+        oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+        response = requests.get(oembed_url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            metadata["title"] = data.get("title", metadata["title"])
+            metadata["author_name"] = data.get("author_name", metadata["author_name"])
+            st.write(f"✅ Found video: **{metadata['title']}**")
+        else:
+            st.warning("⚠️ Could not fetch complete metadata, proceeding with defaults.")
+    except Exception as e:
+        st.warning(f"⚠️ Metadata fetch error: {e}")
+
+    # --- 2. Fetch Transcript ---
+    st.write("🌐 Calling free YouTube Transcript API...")
+    try:
+        yt_api = YouTubeTranscriptApi()
+        raw_transcript = yt_api.fetch(video_id)
         
-        # --- 3. Gather Metadata and Merge ---
-        st.write("📊 Fetching Video Metadata...")
-        video_metadata = fetch_youtube_metadata(video_url)
+        segments = []
+        for item in raw_transcript:
+            segments.append({
+                # CHANGED: We now access these as object attributes instead of dict keys
+                "start": getattr(item, "start", 0.0), 
+                "text": getattr(item, "text", "")
+            })
         
-        # Ensure we have a clean dictionary to save
-        full_data = {
-            "metadata": video_metadata,
-            # Handle different API return structures gracefully
-            "segments": api_data.get("segments", api_data.get("transcript", []))
+        st.success(f"✅ Successfully extracted {len(segments)} transcript segments!")
+        return {
+            "segments": segments,
+            "metadata": metadata
         }
         
-        # If API returned a raw list instead of a dict, fix it:
-        if not full_data["segments"] and isinstance(api_data, list):
-            full_data["segments"] = api_data
-
-        # --- 4. Save to Local Cache ---
-        if full_data["segments"]:
-            try:
-                with open(cache_filepath, "w", encoding="utf-8") as f:
-                    # We are now saving the ENTIRE object (Metadata + Segments)
-                    json.dump(full_data, f, ensure_ascii=False, indent=4)
-                st.write(f"💾 Saved complete data packet to `{cache_filepath}`.")
-            except Exception as e:
-                st.warning(f"⚠️ Failed to save data locally: {e}")
-            
-            return full_data
-        else:
-            st.warning("⚠️ The API returned an empty list of segments.")
-            return {}
-            
-    except requests.exceptions.RequestException as e:
-        st.error(f"❌ API/Network Error: {e}")
+    except Exception as e:
+        # Pushing the exact error to the UI so the user can read it
+        st.error(f"❌ Transcript extraction failed! Error: {e}")
+        st.info("💡 Hint: This usually happens if the video has subtitles disabled by the creator, is age-restricted, or is a live stream.")
         return {}
+    
 
 def format_transcript_for_copy(transcript_data: list) -> str:
     """Compiles the edited transcript segments into a single, clean text block."""
@@ -347,30 +337,39 @@ def llm_settings(manager: manager.Manager, default_model: str, default_temp: flo
     return model, temperature, max_tokens, streaming_on, system_prompt
 
 # Helper function to avoid duplicating the generation code
-def run_generation(manager, llm_payload, system_prompt, model, temperature, max_tokens, cached_path, streaming_on):
-
-    st.session_state.enhanced_text = ""
-    text_placeholder = st.empty()
-    
-    if streaming_on:
-        full_text = ""
-        with st.status(f"Generative pass using {model}...", expanded=True) as status:
-            for chunk in manager.generate_stream(llm_payload, system_prompt, model, temperature, max_tokens):
+def run_generation(manager, payload, system_prompt, model_name, temperature, max_tokens, streaming_on):
+    """
+    Generates the enhanced note using the selected LLM.
+    Returns the final text string to be saved in session state.
+    """
+    try:
+        if streaming_on:
+            # Create an empty container to hold the streaming text
+            placeholder = st.empty()
+            full_text = ""
+            
+            # Stream the response chunk by chunk
+            for chunk in manager.generate_stream(payload, system_prompt, model_name, temperature, max_tokens):
                 full_text += chunk
-                text_placeholder.markdown(full_text + "▌") 
-            status.update(label="Complete!", state="complete", expanded=False)
-        text_placeholder.empty() 
-        st.session_state.enhanced_text = full_text
-    else:
-        with st.status(f"Generating Output...", expanded=True) as status:
-            st.session_state.enhanced_text = manager.generate_sync(llm_payload, system_prompt, model, temperature, max_tokens)
-            status.update(label="Complete!", state="complete", expanded=False)
-
-    # Save the new text to disk or overwrite existing file
-    with open(cached_path, "w", encoding="utf-8") as f:
-        f.write(st.session_state.enhanced_text)
-    st.toast("Generation complete and saved!", icon="✅")
-    st.rerun() # Refresh UI to show the new text
+                # Add a blinking cursor effect for better UX
+                placeholder.markdown(full_text + "▌") 
+            
+            # Print the final text without the cursor
+            placeholder.markdown(full_text)
+            st.toast("✅ Generation complete!", icon="🧠")
+            return full_text
+            
+        else:
+            # Sync generation (no streaming)
+            with st.spinner("🧠 Generating AI Note..."):
+                full_text = manager.generate_sync(payload, system_prompt, model_name, temperature, max_tokens)
+                st.markdown(full_text)
+                st.toast("✅ Generation complete!", icon="🧠")
+                return full_text
+                
+    except Exception as e:
+        st.error(f"❌ AI Generation Failed: {e}")
+        return None
 
 
 # Callbacks for shared UI

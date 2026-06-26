@@ -121,3 +121,68 @@ class Manager:
     # NOTE: You will apply this exact same `if/elif/else` routing pattern 
     # to your `generate_sync`, `get_embedding`, and `get_embeddings_batch` functions. 
     # For OpenAI embeddings, the call is `self.openai_client.embeddings.create(input=text, model=model_name).data[0].embedding`
+
+
+def generate_sync(self, prompt, system_prompt, model_name="gemini-2.5-flash", temperature=1.0, max_tokens=None):
+        """Routes the synchronous request based on the model name prefix."""
+        
+        # --- OPENAI ROUTE ---
+        if self.is_openai_model(model_name):
+            if not self.openai_client:
+                return "Error: OpenAI client not initialized. Check your API key."
+            try:
+                response = self.openai_client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=False
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                print(f"OpenAI sync error: {e}")
+                return f"Error: {e}"
+
+        # --- GEMINI ROUTE ---
+        elif self.is_gemini_model(model_name):
+            if not self.gemini_client:
+                return "Error: Gemini client not initialized. Check your API key."
+            try:
+                config = types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=temperature,
+                    max_output_tokens=max_tokens if max_tokens else None
+                )
+                response = self.gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=config
+                )
+                return response.text
+            except Exception as e:
+                print(f"Gemini sync error: {e}")
+                return f"Error: {e}"
+
+        # --- OLLAMA ROUTE (Fallback) ---
+        else:
+            try:
+                options = {"temperature": temperature}
+                if max_tokens: options["num_predict"] = max_tokens
+                
+                response = requests.post("http://localhost:11434/api/generate", json={
+                    "model": model_name,
+                    "prompt": prompt,
+                    "system": system_prompt,
+                    "stream": False,
+                    "options": options
+                })
+                if response.status_code == 200:
+                    return response.json().get("response", "")
+                else:
+                    return f"Error: {response.text}"
+            except Exception as e:
+                print(f"Ollama sync error: {e}")
+                return f"Error: {e}"

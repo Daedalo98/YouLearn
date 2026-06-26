@@ -5,9 +5,10 @@ from streamlit_player import st_player
 import functions
 import AI_manager as manager
 import spreader
+import json
 
 # Load environment variables from the .env file
-load_dotenv()
+# load_dotenv()
 
 # ==========================================
 # PAGE CONFIGURATION & SETUP
@@ -30,6 +31,64 @@ if "manager" not in st.session_state:
         openai_api_key=st.session_state.get("openai_key", "")
     )
 
+if "prompts_dict" not in st.session_state:
+    # Default prompts loaded into memory on first run
+    st.session_state.prompts_dict = {
+        "Obsidian_Default": "You are an expert knowledge manager. Process the provided metadata and transcript into a highly structured, Obsidian-style Markdown note to enhance the comprehension of the provided text.\n\nCRITICAL INSTRUCTION for appropriate formatting of the answer:\n0. Include a title at the top using the video title (# video title).\n1. Include a YAML frontmatter block with: tags (e.g., #tag1, #tag2), aliases, author, date, and source url.\n2. Create a brief 'Summary' section.\n3. Create a 'Key Insights' section using bullet points.\n4. Format the main concepts under clear header sections.\n5. Include a 'Related / Connections' section at the bottom for internal wiki linking (e.g., [[Concept Name]]).\n6. Do NOT hallucinate. Rely strictly on the provided transcript.\n\nCONSTRAINTS:\n- NEVER hallucinate.\n- make sure that EVERY key information of the text is transposed.\n- analyze in depth and help comprehension.\n- follow CRITICAL INSTRUCTION for appropriate formatting of the answer.\n- detail and define pivotal points using info from the provided text.",
+        "Questions_Generator": "You are an adaptive expert educator. Based on the provided notes, generate questions.\n Ensure each question is different from previous ones.\n You MUST output ONLY a valid JSON object. No markdown, no arrays, no conversational text.\n",
+        "Answers_Generator": "You are an adaptive expert educator. Based on the provided notes and questions, generate answers.\n Ensure each answer is different from previous ones and only one and only one answer must be the correct answer.\n You MUST output ONLY a valid JSON object. No markdown, no arrays, no conversational text.\n",
+        "RAG_query": "You are an expert search query optimizer for a Retrieval-Augmented Generation (RAG) system.\n Your goal is to take a user's raw brain-dump and expand it to maximize its semantic footprint for a vector database search over academic/technical Markdown files.\n Instructions:\n 1. Identify the core concepts in the raw query.\n 2. Add relevant synonyms, related technical terms, and broader/narrower concepts.\n 3. Formulate the output as a comprehensive, prolix paragraph. Do NOT use bullet points. \n 4. Do NOT attempt to answer the query. Only expand the search terms.\n 5. Do NOT include any preamble or postscript. The output should be a single, standalone paragraph ready for embedding and searching.\n\n CRITICAL INSTRUCTION: The output MUST be a single, comprehensive paragraph that expands the original query with related concepts and synonyms. Do NOT use bullet points or lists. Do NOT include any preamble or postscript.",
+        "Academic_generator": "You are an expert academic researcher and writer. Your task is to synthesize the provided context blocks to comprehensively and objectively answer the user's query.\n Adhere STRICTLY to the following rules:\n 1. ABSOLUTE GROUNDING: Rely exclusively on the provided context. Do not introduce outside knowledge, and absolutely do not hallucinate facts or data. If the context does not contain enough information to fully answer the query, explicitly state the limitations of the provided text.\n 2. ACADEMIC SYNTHESIS: Do not simply summarize each source sequentially. Integrate the information cohesively, grouping by themes, arguments, or chronological developments. Maintain a formal, objective, and scholarly tone.\n 3. NO REFERENCE LIST: DO NOT generate a 'References,' 'Bibliography,' or 'Works Cited' section at the end of your response. DO NOT use [...] to address to names or numbers.\n4. IN-TEXT ATTRIBUTION: When making a specific claim, use the knowledge of the retrieved chunks, but DO NOT attribute it to the relevant source using the provided source names (e.g., \"As noted in [Source Name]...\" or \"...(Source Name).\").\nThe system pipeline will automatically append verified citations programmatically, so you DO NOT.",
+        
+        "YouTube_Summary": """You are a rigid data-extraction script. Your ONLY function is to map the provided text into the exact Markdown template below.
+
+        <CRITICAL_RULES>
+        1. NO PREAMBLE. NO POSTSCRIPT. Do NOT say 'Here is the note' or 'Sure!'.
+        2. The very first character of your output MUST be the '#' symbol.
+        3. Wrap all key domain terminology in double brackets for Obsidian linking (e.g., [[Machine Learning]]).
+        4. Use bullet points extensively. Do NOT write long paragraphs, BUT be exhaustive.
+        </CRITICAL_RULES>
+
+        <TEMPLATE>
+        # {TITLE}
+
+        ## 🎯 Core Thesis
+        > [Insert a 3-4 sentence summary of the primary argument or finding here.]
+
+        ## 🔑 Key Concepts & Definitions
+        * **[[Concept 1]]**: [Definition based on text]
+        * **[[Concept 2]]**: [Definition based on text]
+
+        ## 🛠️ Methodology / Approach
+        * [Bullet point detailing step 1 of their approach]
+        * [Bullet point detailing step 2]
+
+        ## 📊 Primary Results & Findings
+        * [Key finding 1]
+        * [Key finding 2]
+
+        ## 🧠 Conclusions & Implications
+        * [Conclusion 1]
+        * [Conclusion 2]
+        </TEMPLATE>
+
+        BEGIN EXACT TEMPLATE OUTPUT NOW:"""
+        }
+    
+# ==========================================
+# SYSTEM LOGGER INITIALIZATION
+# ==========================================
+import datetime
+
+if "app_logs" not in st.session_state:
+    st.session_state.app_logs = []
+
+def add_log(message: str):
+    """Appends a timestamped log to the session state."""
+    timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+    st.session_state.app_logs.insert(0, f"[{timestamp}] {message}")
+
+
 # ==========================================
 # STATE INITIALIZATION
 # ==========================================
@@ -49,6 +108,10 @@ if "enhanced_text" not in st.session_state:
 if "is_editing_enhanced" not in st.session_state:
     st.session_state.is_editing_enhanced = False
     
+# ==========================================
+# UI LAYOUT & INTERACTION
+# ==========================================
+
 # zoom related states
 if "global_zoom" not in st.session_state:
     st.session_state.global_zoom = 22 # Default font size in pixels
@@ -61,44 +124,30 @@ def sync_zoom(slider_key):
             st.session_state.global_zoom = st.session_state[slider_key]
 
 # ==========================================
-# UI LAYOUT & INTERACTION
-# ==========================================
-
-# ==========================================
 # USER SETTINGS & CREDENTIALS
 # ==========================================
 with st.sidebar:
-    st.title("🔐 User Settings")
-    with st.expander("Configure API Keys & Paths", expanded=True): # Keep open until configured
+    st.title("⚙️ Settings")
+    
+    # Changed to "Optional" so users know they can skip this if using Ollama
+    with st.expander("Cloud API Keys (Optional)", expanded=True): 
         
-        # type="password" hides the input for security
-        user_api_key = st.text_input("LLM API Key (OpenAI/Gemini)", type="password", 
-                                     help="Enter your private API key. It is only stored in memory for this session.")
-        user_yt_key = st.text_input("YouTube API Key", type="password")
+        user_gemini_key = st.text_input("Gemini API Key", type="password", value=st.session_state.get("gemini_key", ""))
+        user_openai_key = st.text_input("OpenAI API Key", type="password", value=st.session_state.get("openai_key", ""))
         
-        # Allow users to define their own local paths (Note: see warning below regarding cloud hosting)
-        user_cache_path = st.text_input("Save Transcripts to Directory:", value="saved_transcripts")
-        user_prompts_path = st.text_input("System Prompts File:", value="system_prompts.json")
-        
-        if st.button("Save Configuration", width="stretch"):
-            # Store in session state so it persists across user interactions
-            st.session_state.api_key = user_api_key
-            st.session_state.yt_key = user_yt_key
-            st.session_state.CACHE_DIR = user_cache_path
-            st.session_state.PROMPTS_FILE = user_prompts_path
+        # We removed the Cache Directory and Prompts File inputs entirely!
+
+        if st.button("Save Keys", width="stretch"):
+            # 1. Save keys to session state
+            st.session_state.gemini_key = user_gemini_key
+            st.session_state.openai_key = user_openai_key
             
-            # Create the directory if the user changed it and it doesn't exist
-            if not os.path.exists(st.session_state.CACHE_DIR):
-                os.makedirs(st.session_state.CACHE_DIR)
-                
-            st.success("Settings applied for this session!")
-
-# Check if keys exist before allowing processing
-keys_configured = bool(st.session_state.get("api_key") and st.session_state.get("yt_key"))
-
-if not keys_configured:
-    st.warning("⚠️ Please configure your API Keys in the sidebar to use the application.")
-    st.stop() # This halts execution of the rest of the page until keys are provided
+            # 2. Re-initialize the manager so it picks up the new keys immediately
+            st.session_state.manager = manager.Manager(
+                gemini_api_key=st.session_state.gemini_key,
+                openai_api_key=st.session_state.openai_key
+            )
+            st.success("Keys applied! Cloud models unlocked.")
 
     # ---------------------------------------------------------
     # OPTION 1: INGEST NEW VIDEO
@@ -108,42 +157,47 @@ if not keys_configured:
         input_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
         submit_btn = st.form_submit_button("Fetch & Process Transcript", type="primary")
     
-    if submit_btn:
-        if input_url.strip():  
-            
-            # --- PURGE OLD STATE ---
-            st.session_state.transcript = []
-            st.session_state.metadata = {}
-            st.session_state.video_url = ""
-            st.session_state.video_id = ""
-            st.session_state.enhanced_text = ""
-            st.session_state.quiz_state = "setup"
-
-            video_id = functions.extract_video_id(input_url)
-            st.toast(f"Processing ID: {video_id}", icon="🔍")
-            
-            for key in list(st.session_state.keys()):
-                if key.startswith("text_") or key.startswith("btn_"):
-                    del st.session_state[key]
-            
-            # --- FETCH NEW DATA ---
-            st.session_state.video_url = input_url
-            st.session_state.video_id = video_id
-            
-            with st.status(f"Processing Request for {video_id}...", expanded=True) as status:
-                full_data_dict = functions.fetch_transcript_with_logs(st.session_state.CACHE_DIR, input_url, video_id)
+        if submit_btn:
+            if input_url.strip():  
+                video_id = functions.extract_video_id(input_url)
+                add_log(f"User requested extraction for URL: {input_url}")
                 
-                if full_data_dict and full_data_dict.get("segments"):
-                    st.session_state.transcript = full_data_dict["segments"]
-                    st.session_state.metadata = full_data_dict.get("metadata", {}) 
-                    st.session_state.start_time = 0.0
-                    status.update(label="Transcript Ready!", state="complete", expanded=False)
-                else:
-                    status.update(label="Failed to fetch valid data. Check API/URL.", state="error", expanded=True)
-            
-            st.rerun()
-        else:
-            st.warning("Please enter a valid YouTube URL first.")
+                # --- PURGE OLD STATE ---
+                st.session_state.transcript = []
+                st.session_state.metadata = {}
+                st.session_state.video_url = ""
+                st.session_state.video_id = ""
+                st.session_state.enhanced_text = ""
+                st.session_state.quiz_state = "setup"
+
+                for key in list(st.session_state.keys()):
+                    if key.startswith("text_") or key.startswith("btn_"):
+                        del st.session_state[key]
+                
+                # --- FETCH NEW DATA ---
+                st.session_state.video_url = input_url
+                st.session_state.video_id = video_id
+                
+                with st.status(f"Processing Request for {video_id}...", expanded=True) as status:
+                    # Removed CACHE_DIR argument!
+                    full_data_dict = functions.fetch_transcript_with_logs(input_url, video_id)
+                    
+                    if full_data_dict and full_data_dict.get("segments"):
+                        st.session_state.transcript = full_data_dict["segments"]
+                        st.session_state.metadata = full_data_dict.get("metadata", {}) 
+                        st.session_state.start_time = 0.0
+                        
+                        add_log(f"Successfully loaded transcript for {video_id}.")
+                        status.update(label="Transcript Ready!", state="complete", expanded=False)
+                        
+                        # ONLY RERUN IF SUCCESSFUL!
+                        st.rerun() 
+                    else:
+                        add_log(f"Failed to fetch data for {video_id}.")
+                        status.update(label="Failed to fetch valid data. Read logs above.", state="error", expanded=True)
+                        # NO RERUN HERE. Let the user read the error message.
+            else:
+                st.warning("Please enter a valid YouTube URL first.")
 
     st.divider()
 
@@ -216,6 +270,18 @@ if not keys_configured:
         )
     else:
         st.info("No active video to export.")
+
+    # ---------------------------------------------------------
+    # System Logs
+    # ---------------------------------------------------------
+    st.divider()
+    st.subheader("📝 System Logs")
+    with st.container(height=300, border=True):
+        if not st.session_state.app_logs:
+            st.caption("No logs yet...")
+        else:
+            for log in st.session_state.app_logs:
+                st.text(log) # st.text keeps the formatting clean
 
 # --- Main Layout ---
 st.title("🎬 YouTube Transcript Editor")
@@ -297,10 +363,12 @@ with transcript_container:
         
         st.markdown("<hr style='margin: 0.2em 0px; border-top: 1px dashed #ddd;'>", unsafe_allow_html=True)
 
-st.header("✨ Step 2: Summarization via LLM")
 
-cached_path = os.path.join(st.session_state.CACHE_DIR, f"{st.session_state.video_id}_enhanced.md")
-file_exists = os.path.exists(cached_path)
+# ==========================================
+# STEP 2: LLM-BASED SUMMARIZATION
+# ==========================================
+
+st.header("✨ Step 2: Summarization via LLM")
 
 meta = st.session_state.metadata
 
@@ -335,7 +403,7 @@ with st.container(border=True):
     with col_prompt:
         st.subheader("LLM Settings")
         with st.expander("🧠 Active Models & Gen Options", expanded=True):
-            available_models = manager.get_models()
+            available_models = st.session_state.manager.get_models()
             default_models = ["No models found"] if not available_models else available_models
             text_idx = default_models.index("granite4:7b-a1b-h") if "granite4:7b-a1b-h" in default_models else 0
 
@@ -346,86 +414,84 @@ with st.container(border=True):
             max_tokens = st.number_input("Max Tokens (Verbosity)", 100, 10000, DEFAULT_TOKENS, 100)
             streaming_on = st.toggle("Streaming Generation", value=True)
 
+        # -----------------------
+        # system prompt selection
+        # -----------------------
+
         st.subheader("System Prompts")
-        prompts_dict = functions.load_prompts(st.session_state.PROMPTS_FILE)
-        prompt_names = list(prompts_dict.keys())
         
-        # Determine default index
+        # 1. Get available prompts and determine the default index
+        prompt_names = list(st.session_state.prompts_dict.keys())
         default_idx = prompt_names.index(DEFAULT_PROMPT) if DEFAULT_PROMPT in prompt_names else 0
         
-        # 1. INITIALIZE STATE FIRST
-        # We must set this before the widgets render so the default prompt is ready.
-        if "text_prompt_area" not in st.session_state:
-            st.session_state.text_prompt_area = prompts_dict.get(prompt_names[default_idx], "")
-
-        # 2. DEFINE THE CALLBACK
-        def sync_prompt_to_area():
-            """Forces the text area state to match the newly selected dropdown item."""
-            selected = st.session_state.text_prompt_sel
-            st.session_state.text_prompt_area = prompts_dict.get(selected, "")
-
-        # 3. RENDER SELECTBOX AND CAPTURE THE NAME
+        # 2. Render the Selectbox (No complex callbacks needed anymore!)
         selected_prompt_name = st.selectbox(
             "Active Prompt", 
             prompt_names, 
-            index=default_idx, 
-            key="text_prompt_sel",
-            on_change=sync_prompt_to_area
+            index=default_idx
         )
         
-        # 4. RENDER TEXT AREA (No 'value' parameter needed, the key handles it)
-        system_prompt = st.text_area("Edit Current Prompt", height=200, key="text_prompt_area")
+        # 3. Grab the actual text from the dictionary based on the selection
+        current_prompt_text = st.session_state.prompts_dict.get(selected_prompt_name, "")
         
-        # 5. USE THE SELECTED NAME FOR SAVING (Restoring your original feature)
+        # 4. Render Text Area using a DYNAMIC KEY. 
+        # Why this works: By putting the name of the prompt in the key, Streamlit 
+        # treats it as a brand new text area every time you change the dropdown, 
+        # forcing it to load the correct `current_prompt_text` value!
+        system_prompt = st.text_area(
+            "Edit Current Prompt", 
+            value=current_prompt_text, 
+            height=200, 
+            key=f"prompt_box_{selected_prompt_name}" 
+        )
+        
+        # 5. Save Logic
         with st.expander("Save / Modify Prompt"):
-            # Here is where selected_prompt_name is actually used!
             new_prompt_name = st.text_input("Save as (Prompt Name)", value=selected_prompt_name)
             
-            if st.button("Save Prompt", width='stretch'):
+            if st.button("Save Prompt to Session", width='stretch'):
                 if new_prompt_name and system_prompt:
-                    functions.save_prompt(st.session_state.PROMPTS_FILE, new_prompt_name, system_prompt)
-                    st.success("Saved!")
+                    # Update the dictionary in memory
+                    st.session_state.prompts_dict[new_prompt_name] = system_prompt
+                    st.success("Prompt saved to current session!")
                     st.rerun()
 
-    # UI Rendering based on file existence
-    if file_exists:
+    # UI Rendering based on memory state
+    if st.session_state.enhanced_text:
         st.info("📝 A generated note already exists for this document.")
-        col_load, col_recreate = st.columns(2)
         
-        with col_load:
-            if st.button("📂 Load Existing Note", width='stretch'):
-                with open(cached_path, "r", encoding="utf-8") as f:
-                    st.session_state.enhanced_text = f.read()
-                    
-        with col_recreate:
-            # Modern Streamlit popup alternative
-            with st.popover("⚠️ Recreate Note", width='stretch'):
-                st.markdown("This will **permanently overwrite** your existing Markdown note and any manual edits. Are you sure?")
-                if st.button("Yes, Overwrite Note", type="primary", width='stretch'):
-                    functions.run_generation(
-                        manager, 
-                        llm_payload, 
-                        system_prompt, 
-                        text_model, 
-                        temperature, 
-                        max_tokens, 
-                        cached_path, 
-                        streaming_on
-                        )
-                    
-                    st.rerun() # Refresh UI to show the new text
+        # Modern Streamlit popup to prevent accidental overwrites
+        with st.popover("⚠️ Recreate Note", width='stretch'):
+            st.markdown("This will **permanently overwrite** your existing Markdown note and any manual edits. Are you sure?")
+            if st.button("Yes, Overwrite Note", type="primary", width='stretch'):
+                # Pass None for the cached_path, your functions.py should be updated 
+                # to return the text instead of writing to a file!
+                new_text = functions.run_generation(
+                    st.session_state.manager, 
+                    llm_payload, 
+                    system_prompt, 
+                    text_model, 
+                    temperature, 
+                    max_tokens, 
+                    streaming_on
+                )
+                if new_text:
+                    st.session_state.enhanced_text = new_text
+                st.rerun()
     else:
         if st.button("🚀 Generate Note", width='stretch', type="primary"):
-            functions.run_generation(
-                manager, 
+            new_text = functions.run_generation(
+                st.session_state.manager, 
                 llm_payload, 
                 system_prompt, 
                 text_model, 
                 temperature, 
                 max_tokens, 
-                cached_path, 
                 streaming_on
-                )
+            )
+            if new_text:
+                st.session_state.enhanced_text = new_text
+            st.rerun()
 
     with col_output:
         st.subheader("Enhanced Output (.md)")
@@ -478,11 +544,17 @@ def get_quiz_payload():
 
 st.markdown("---") # Add a nice visual divider
 st.header("📝 Step 3: Metacognitive Quiz Generation")
-st.button("📝 Generate Quiz", type="primary", on_click=lambda: st.session_state.update({"quiz_state": "setup"}))
-if st.session_state.get("quiz_state") == "setup":
+load_quiz = st.button("Generate Quiz from Enhanced Note", type="primary", use_container_width=True)
+
+if load_quiz:
+    if not st.session_state.get('enhanced_text'):
+        st.warning("No enhanced text available yet. Using original transcript for quiz generation.")
+    st.session_state.quiz_state = "setup"
+    st.rerun()
+
+if st.session_state.get('quiz_state') == "setup": 
     render_quiz_step(
         doc_id=st.session_state.video_id, 
-        manager=manager, 
-        get_quiz_payload_func=get_quiz_payload,
-        CACHE_DIR = st.session_state.CACHE_DIR
+        manager=st.session_state.manager, 
+        get_quiz_payload_func=get_quiz_payload
     )
