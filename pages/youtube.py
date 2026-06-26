@@ -15,15 +15,20 @@ load_dotenv()
 st.set_page_config(layout="wide", page_title="YouTube Transcript Sync", page_icon="🎥")
 
 # Create a local directory for caching transcripts
-CACHE_DIR = "saved_transcripts"
-if not os.path.exists(CACHE_DIR):
-    os.makedirs(CACHE_DIR)
+if "CACHE_DIR" not in st.session_state:
+    st.session_state.CACHE_DIR = "saved_transcripts"
+    if not os.path.exists(st.session_state.CACHE_DIR):
+        os.makedirs(st.session_state.CACHE_DIR)
+        
+if "PROMPTS_FILE" not in st.session_state:
+    st.session_state.PROMPTS_FILE = "system_prompts.json"
 
-PROMPTS_FILE = "system_prompts.json"
-
-@st.cache_resource
-def get_manager(): return manager.Manager()
-manager = get_manager()
+# INSTEAD: Initialize the manager securely in session state
+if "manager" not in st.session_state:
+    st.session_state.manager = manager.Manager(
+        gemini_api_key=st.session_state.get("gemini_key", ""),
+        openai_api_key=st.session_state.get("openai_key", "")
+    )
 
 # ==========================================
 # STATE INITIALIZATION
@@ -59,9 +64,41 @@ def sync_zoom(slider_key):
 # UI LAYOUT & INTERACTION
 # ==========================================
 
-# --- Sidebar ---
+# ==========================================
+# USER SETTINGS & CREDENTIALS
+# ==========================================
 with st.sidebar:
-    st.title("⚙️ Settings")
+    st.title("🔐 User Settings")
+    with st.expander("Configure API Keys & Paths", expanded=True): # Keep open until configured
+        
+        # type="password" hides the input for security
+        user_api_key = st.text_input("LLM API Key (OpenAI/Gemini)", type="password", 
+                                     help="Enter your private API key. It is only stored in memory for this session.")
+        user_yt_key = st.text_input("YouTube API Key", type="password")
+        
+        # Allow users to define their own local paths (Note: see warning below regarding cloud hosting)
+        user_cache_path = st.text_input("Save Transcripts to Directory:", value="saved_transcripts")
+        user_prompts_path = st.text_input("System Prompts File:", value="system_prompts.json")
+        
+        if st.button("Save Configuration", width="stretch"):
+            # Store in session state so it persists across user interactions
+            st.session_state.api_key = user_api_key
+            st.session_state.yt_key = user_yt_key
+            st.session_state.CACHE_DIR = user_cache_path
+            st.session_state.PROMPTS_FILE = user_prompts_path
+            
+            # Create the directory if the user changed it and it doesn't exist
+            if not os.path.exists(st.session_state.CACHE_DIR):
+                os.makedirs(st.session_state.CACHE_DIR)
+                
+            st.success("Settings applied for this session!")
+
+# Check if keys exist before allowing processing
+keys_configured = bool(st.session_state.get("api_key") and st.session_state.get("yt_key"))
+
+if not keys_configured:
+    st.warning("⚠️ Please configure your API Keys in the sidebar to use the application.")
+    st.stop() # This halts execution of the rest of the page until keys are provided
 
     # ---------------------------------------------------------
     # OPTION 1: INGEST NEW VIDEO
@@ -94,7 +131,7 @@ with st.sidebar:
             st.session_state.video_id = video_id
             
             with st.status(f"Processing Request for {video_id}...", expanded=True) as status:
-                full_data_dict = functions.fetch_transcript_with_logs(CACHE_DIR, input_url, video_id)
+                full_data_dict = functions.fetch_transcript_with_logs(st.session_state.CACHE_DIR, input_url, video_id)
                 
                 if full_data_dict and full_data_dict.get("segments"):
                     st.session_state.transcript = full_data_dict["segments"]
@@ -113,54 +150,27 @@ with st.sidebar:
     # ---------------------------------------------------------
     # OPTION 2: LOAD SAVED VIDEO
     # ---------------------------------------------------------
-    st.subheader("Load Saved Video")
-    
-    cached_videos = functions.get_cached_videos(CACHE_DIR)
-    
-    if not cached_videos:
-        st.info("No saved videos found. Fetch a new URL above to get started!")
-    else:
-        # Wrap the selectbox and load button inside a form
-        with st.form("load_saved_video_form"):
-            video_id = st.selectbox(
-                "Select a previous video:",
-                options=list(cached_videos.keys()),
-                format_func=lambda x: cached_videos[x]
-            )
-            
-            # Form submit button acts as your load button
-            load_btn = st.form_submit_button("📁 Load Video", type="secondary", use_container_width=True)
-            
-        if load_btn:
-            # --- PURGE OLD STATE ---
-            st.session_state.transcript = []
-            st.session_state.metadata = {}
-            st.session_state.video_url = ""
-            st.session_state.video_id = ""
-            st.session_state.enhanced_text = ""
-            st.session_state.quiz_state = "setup"
 
-            for key in list(st.session_state.keys()):
-                if key.startswith("text_") or key.startswith("btn_"):
-                    del st.session_state[key]
-                    
-            # --- LOAD DATA FROM DISK ---
-            loaded_data = functions.load_cached_video(CACHE_DIR, video_id)
-            if not loaded_data:
-                st.error("No data found for this video. It might have been deleted or corrupted.")
-            
-            if loaded_data and "segments" in loaded_data:
-                st.session_state.transcript = loaded_data["segments"]
-                st.session_state.metadata = loaded_data.get("metadata", {})
-                st.session_state.video_id = video_id
-                st.session_state.video_url = loaded_data.get("metadata", {}).get("video_url", f"https://youtube.com/watch?v={video_id}")
-                st.session_state.start_time = 0.0
+    st.subheader("Load Saved Workspace")
+    uploaded_file = st.file_uploader("Upload a previously downloaded .json file", type=["json"])
+
+    if uploaded_file is not None:
+        if st.button("📁 Load Data from File", use_container_width=True):
+            try:
+                # Read the JSON file the user just uploaded
+                loaded_data = json.load(uploaded_file)
                 
-                st.toast(f"Successfully loaded '{cached_videos[video_id]}'!", icon="✅")
+                # Populate session state
+                st.session_state.transcript = loaded_data.get("segments", [])
+                st.session_state.metadata = loaded_data.get("metadata", {})
+                st.session_state.video_id = loaded_data.get("video_id", "")
+                st.session_state.video_url = loaded_data.get("metadata", {}).get("video_url", "")
+                st.session_state.enhanced_text = loaded_data.get("enhanced_text", "")
+                
+                st.toast("Data successfully loaded from file!", icon="✅")
                 st.rerun()
-            else:
-                st.error("Failed to load the local file. It might be corrupted.")
-
+            except Exception as e:
+                st.error(f"Failed to load file. It might be corrupted. Error: {e}")
 
     # ---------------------------------------------------------
     # VIDEO PLAYBACK (Shared by both logic paths)
@@ -177,7 +187,35 @@ with st.sidebar:
             config={"playerVars": {"start": int(float(st.session_state.start_time)), "autoplay": 0}},
             key=f"player_{st.session_state.start_time}"
         )
+
+    # ---------------------------------------------------------    
+    # Export Workspace
+    # ---------------------------------------------------------
+
+    st.subheader("💾 Export Current Workspace")
+    # Check if there is actual data to export
+    if st.session_state.get("transcript"):
         
+        # Bundle the data they need to restore the session
+        export_dict = {
+            "video_id": st.session_state.video_id,
+            "metadata": st.session_state.metadata,
+            "segments": st.session_state.transcript,
+            "enhanced_text": st.session_state.enhanced_text
+        }
+        
+        # Convert dict to a formatted JSON string
+        json_string = json.dumps(export_dict, indent=4)
+        
+        st.download_button(
+            label="📥 Download Session as JSON",
+            data=json_string,
+            file_name=f"transcript_data_{st.session_state.video_id}.json",
+            mime="application/json",
+            use_container_width=True
+        )
+    else:
+        st.info("No active video to export.")
 
 # --- Main Layout ---
 st.title("🎬 YouTube Transcript Editor")
@@ -246,7 +284,6 @@ with transcript_container:
             def update_text(index=i, key_name=unique_txt_key):
                 # Update the main memory with the new text
                 st.session_state.transcript[index]['text'] = st.session_state[key_name]
-                functions.save_edits_to_disk(CACHE_DIR)
                 st.toast("💾 Auto-saved!", icon="✅")
 
             st.text_area(
@@ -262,7 +299,7 @@ with transcript_container:
 
 st.header("✨ Step 2: Summarization via LLM")
 
-cached_path = os.path.join(CACHE_DIR, f"{st.session_state.video_id}_enhanced.md")
+cached_path = os.path.join(st.session_state.CACHE_DIR, f"{st.session_state.video_id}_enhanced.md")
 file_exists = os.path.exists(cached_path)
 
 meta = st.session_state.metadata
@@ -310,7 +347,7 @@ with st.container(border=True):
             streaming_on = st.toggle("Streaming Generation", value=True)
 
         st.subheader("System Prompts")
-        prompts_dict = functions.load_prompts(PROMPTS_FILE)
+        prompts_dict = functions.load_prompts(st.session_state.PROMPTS_FILE)
         prompt_names = list(prompts_dict.keys())
         
         # Determine default index
@@ -346,7 +383,7 @@ with st.container(border=True):
             
             if st.button("Save Prompt", width='stretch'):
                 if new_prompt_name and system_prompt:
-                    functions.save_prompt(PROMPTS_FILE, new_prompt_name, system_prompt)
+                    functions.save_prompt(st.session_state.PROMPTS_FILE, new_prompt_name, system_prompt)
                     st.success("Saved!")
                     st.rerun()
 
@@ -403,7 +440,7 @@ with st.container(border=True):
                     st.session_state.enhanced_text = edited
                     st.toast("Edits saved!", icon="✅")
                     st.session_state.is_editing_enhanced = False
-                    with open(os.path.join(CACHE_DIR, f"{st.session_state.video_id}_enhanced.md"), "w", encoding="utf-8") as f:
+                    with open(os.path.join(st.session_state.CACHE_DIR, f"{st.session_state.video_id}_enhanced.md"), "w", encoding="utf-8") as f:
                         f.write(st.session_state.enhanced_text)
                     st.rerun()
             else:
@@ -439,9 +476,13 @@ def get_quiz_payload():
         st.warning("No enhanced text available yet. Using original transcript for quiz generation.")
         return st.session_state.transcript
 
-render_quiz_step(
-    doc_id=st.session_state.video_id, 
-    manager=manager, 
-    get_quiz_payload_func=get_quiz_payload,
-    CACHE_DIR = CACHE_DIR
-)
+st.markdown("---") # Add a nice visual divider
+st.header("📝 Step 3: Metacognitive Quiz Generation")
+st.button("📝 Generate Quiz", type="primary", on_click=lambda: st.session_state.update({"quiz_state": "setup"}))
+if st.session_state.get("quiz_state") == "setup":
+    render_quiz_step(
+        doc_id=st.session_state.video_id, 
+        manager=manager, 
+        get_quiz_payload_func=get_quiz_payload,
+        CACHE_DIR = st.session_state.CACHE_DIR
+    )
